@@ -4,20 +4,9 @@ import {
   useDraft,
   useRangesSorted,
 } from '@/store/useRangeStore';
-import type { RangeDoc } from '@/store/storage';
+import { clampSeats, type RangeDoc } from '@/store/storage';
 import styles from '@/styles/sidebar.module.css';
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  if (sameDay) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+import { NewRangeDialog } from './NewRangeDialog';
 
 interface ItemMenuProps {
   range: RangeDoc;
@@ -80,6 +69,7 @@ export function RangeList() {
   const { rangeId, name: draftName, dirty } = useDraft();
   const ranges = useRangesSorted();
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === '1';
@@ -110,9 +100,7 @@ export function RangeList() {
       const ok = window.confirm('当前方案有未保存的改动，新建会丢弃改动，是否继续？');
       if (!ok) return;
     }
-    const v = window.prompt('新建方案名称：', 'Untitled');
-    if (v === null) return;
-    rangeActions.newRange(v);
+    setCreating(true);
   };
 
   const headerText = collapsed
@@ -122,7 +110,9 @@ export function RangeList() {
     : '方案列表';
 
   return (
-    <div className={`${styles.section} ${collapsed ? styles.collapsed : ''}`}>
+    <div
+      className={`${styles.section} ${styles.rangeSection} ${collapsed ? styles.collapsed : ''}`}
+    >
       <button
         type="button"
         className={styles.sectionHeader}
@@ -180,8 +170,7 @@ export function RangeList() {
                     </span>
                   </div>
                   <div className={styles.itemMeta}>
-                    <span>{r.depths.length}d</span>
-                    <span>{formatTime(r.updatedAt)}</span>
+                    <span>{clampSeats(r.seats)} 人桌</span>
                   </div>
                   {menuId === r.id && <ItemMenu range={r} onClose={() => setMenuId(null)} />}
                 </li>
@@ -194,6 +183,15 @@ export function RangeList() {
             </button>
           </div>
         </>
+      )}
+      {creating && (
+        <NewRangeDialog
+          onCancel={() => setCreating(false)}
+          onConfirm={(name, seats) => {
+            setCreating(false);
+            rangeActions.newRange(name, seats);
+          }}
+        />
       )}
     </div>
   );

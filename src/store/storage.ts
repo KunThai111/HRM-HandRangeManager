@@ -8,9 +8,23 @@ import {
 const STORAGE_KEY = 'nlh-range:v2';
 const LEGACY_KEY = 'nlh-range:v1';
 
+export const MIN_SEATS = 2;
+export const MAX_SEATS = 9;
+export const DEFAULT_SEATS = 9;
+
+export function clampSeats(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SEATS;
+  const n = Math.round(value);
+  if (n < MIN_SEATS) return MIN_SEATS;
+  if (n > MAX_SEATS) return MAX_SEATS;
+  return n;
+}
+
 export interface RangeDoc {
   id: string;
   name: string;
+  /** 牌桌人数（2-9 人） */
+  seats: number;
   depths: DepthGrid[];
   createdAt: number;
   updatedAt: number;
@@ -70,6 +84,7 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
   return {
     id: r.id,
     name: r.name,
+    seats: clampSeats(r.seats),
     depths: deduped,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -108,6 +123,7 @@ function migrateV1(raw: unknown): PersistedState | null {
       byName.set(name, {
         id,
         name,
+        seats: DEFAULT_SEATS,
         depths: [{ label: stack, cells }],
         createdAt,
         updatedAt,
@@ -200,11 +216,13 @@ export function newId(): string {
 export function makeRange(
   name: string,
   depthLabels: readonly string[],
+  seats: number = DEFAULT_SEATS,
   now: number = Date.now(),
 ): RangeDoc {
   return {
     id: newId(),
     name: name.trim() || 'Untitled',
+    seats: clampSeats(seats),
     depths: depthLabels.map((l) => emptyDepth(l)),
     createdAt: now,
     updatedAt: now,

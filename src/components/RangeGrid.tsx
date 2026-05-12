@@ -15,7 +15,8 @@ interface Props {
 export function RangeGrid({ currentAction }: Props) {
   const draft = useDraft();
   const cells = getCurrentDepthCells(draft);
-  const editable = !!draft.rangeId && !!draft.currentDepthLabel;
+  const hasActive = !!draft.rangeId && !!draft.currentDepthLabel;
+  const editable = hasActive && draft.editing;
 
   const paintingRef = useRef<{ active: boolean; action: Action | null }>({
     active: false,
@@ -73,10 +74,19 @@ export function RangeGrid({ currentAction }: Props) {
     if (hand) apply(hand, paintingRef.current.action);
   };
 
+  const gridClass = [
+    styles.grid,
+    !hasActive ? styles.gridDisabled : '',
+    hasActive && !editable ? styles.gridReadOnly : '',
+    editable ? styles.gridEditing : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <div className={styles.gridWrap}>
       <div
-        className={`${styles.grid} ${editable ? '' : styles.gridDisabled}`}
+        className={gridClass}
         ref={gridRef}
         onContextMenu={(e) => e.preventDefault()}
         onPointerMove={onTouchMove}
@@ -87,13 +97,12 @@ export function RangeGrid({ currentAction }: Props) {
           const action: Action = cells[hand] ?? 'fold';
           const bg = ACTION_COLOR[action];
           const fg = ACTION_TEXT_COLOR[action];
-          const isPair = row === col;
           const k = cellKey(row, col);
           return (
             <div
               key={k}
               data-hand={hand}
-              className={`${styles.cell} ${isPair ? styles.pair : ''}`}
+              className={styles.cell}
               style={{ background: bg, color: fg }}
               onPointerDown={(e) => onPointerDown(e, hand)}
               onPointerEnter={() => onPointerEnter(hand)}
@@ -107,7 +116,7 @@ export function RangeGrid({ currentAction }: Props) {
           );
         })}
       </div>
-      {!editable && (
+      {!hasActive && (
         <div className={styles.placeholder}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>

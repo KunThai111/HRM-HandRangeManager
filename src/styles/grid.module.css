@@ -1,15 +1,33 @@
 .gridWrap {
   position: relative;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   flex: 1 1 auto;
   min-height: 0;
+  padding-left: 10px;
 }
 
 .gridDisabled {
   pointer-events: none;
   opacity: 0.35;
+}
+
+.gridReadOnly {
+  border-color: var(--border);
+}
+
+.gridReadOnly .cell {
+  cursor: default;
+}
+
+.gridReadOnly .cell:hover {
+  filter: none;
+}
+
+.gridEditing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(47, 111, 224, 0.18);
 }
 
 .placeholder {
@@ -56,9 +74,4 @@
 
 .cell:hover {
   filter: brightness(1.12);
-}
-
-.cell.pair {
-  outline: 1px solid rgba(255, 255, 255, 0.18);
-  outline-offset: -1px;
 }

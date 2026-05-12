@@ -10,22 +10,22 @@ export const ACTION_LABEL: Record<Action, string> = {
 };
 
 /**
- * 暗色主题下保持高对比度的动作配色。
+ * 范围表 item 的动作配色。
  * - raise: 红色 - 进攻
  * - call:  绿色 - 跟注
- * - fold:  灰色 - 弃牌（默认）
+ * - fold:  白色 - 弃牌（即范围表 item 的默认背景色）
  * - mixed: 黄色 - 混合频率占位
  */
 export const ACTION_COLOR: Record<Action, string> = {
   raise: '#dc3545',
   call: '#28a745',
-  fold: '#3a3f4b',
+  fold: '#ffffff',
   mixed: '#f4c542',
 };
 
 export const ACTION_TEXT_COLOR: Record<Action, string> = {
   raise: '#ffffff',
   call: '#ffffff',
-  fold: '#c8ccd4',
+  fold: '#1f1f1f',
   mixed: '#1f1f1f',
 };

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { countNonFold } from '@/lib/depths';
 import { rangeActions, useDraft } from '@/store/useRangeStore';
 import { DepthEditorDialog } from '@/components/DepthEditorDialog';
 import styles from '@/styles/sidebar.module.css';
@@ -30,7 +29,6 @@ export function DepthList() {
       <ul className={styles.depthList}>
         {depths.map((d) => {
           const active = d.label === currentDepthLabel;
-          const hit = countNonFold(d.cells);
           return (
             <li
               key={d.label}
@@ -38,9 +36,6 @@ export function DepthList() {
               onClick={() => onSwitch(d.label)}
             >
               <span className={styles.depthLabel}>{d.label}</span>
-              <span className={styles.depthBadge}>
-                {hit}/169
-              </span>
             </li>
           );
         })}

@@ -13,8 +13,10 @@ export default function App() {
       <div className="app-body">
         <Sidebar open={false} />
         <main className="app-main">
-          <ActionToolbar current={action} onChange={setAction} />
-          <RangeGrid currentAction={action} />
+          <div className="work-area">
+            <RangeGrid currentAction={action} />
+            <ActionToolbar current={action} onChange={setAction} orientation="vertical" />
+          </div>
           <Stats />
         </main>
       </div>

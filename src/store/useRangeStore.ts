@@ -6,6 +6,8 @@ import {
   type DepthGrid,
 } from '@/lib/depths';
 import {
+  clampSeats,
+  DEFAULT_SEATS,
   loadState,
   makeRange,
   newId,
@@ -19,13 +21,27 @@ import {
  * - 涂色 / 编辑深度操作均在 draft 上发生，dirty=true。
  * - 显式 save 时把整个 draft 写回 persisted.ranges 对应 id。
  * - 没有选中范围时 rangeId=null，网格显示空白只读态。
+ *
+ * 编辑模式（§3.8）：
+ * - editing=false 时网格的单格涂色（paintCell）不会改动 cells。
+ * - beginEdit() 拍下当前激活深度的 cells 快照到 editSnapshot；
+ *   confirmEdit() 退出编辑模式但保留涂色；
+ *   cancelEdit() 把快照写回当前 depth.cells 并重算 dirty。
  */
+export interface EditSnapshot {
+  label: string;
+  cells: Record<string, Action>;
+}
+
 export interface DraftState {
   rangeId: string | null;
   name: string;
+  seats: number;
   depths: DepthGrid[];
   currentDepthLabel: string | null;
   dirty: boolean;
+  editing: boolean;
+  editSnapshot: EditSnapshot | null;
 }
 
 interface InternalState {
@@ -36,9 +52,12 @@ interface InternalState {
 const EMPTY_DRAFT: DraftState = {
   rangeId: null,
   name: '',
+  seats: DEFAULT_SEATS,
   depths: [],
   currentDepthLabel: null,
   dirty: false,
+  editing: false,
+  editSnapshot: null,
 };
 
 function draftFromRange(range: RangeDoc, preferLabel: string | null): DraftState {
@@ -50,10 +69,39 @@ function draftFromRange(range: RangeDoc, preferLabel: string | null): DraftState
   return {
     rangeId: range.id,
     name: range.name,
+    seats: clampSeats(range.seats),
     depths,
     currentDepthLabel: label,
     dirty: false,
+    editing: false,
+    editSnapshot: null,
   };
+}
+
+function cellsEqual(a: Record<string, Action>, b: Record<string, Action>): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+function draftMatchesPersisted(draft: DraftState, persisted: PersistedState): boolean {
+  if (!draft.rangeId) return true;
+  const src = persisted.ranges.find((r) => r.id === draft.rangeId);
+  if (!src) return false;
+  if (src.name !== draft.name) return false;
+  if (src.seats !== draft.seats) return false;
+  if (src.depths.length !== draft.depths.length) return false;
+  for (let i = 0; i < src.depths.length; i++) {
+    const a = src.depths[i];
+    const b = draft.depths[i];
+    if (a.label !== b.label) return false;
+    if (!cellsEqual(a.cells, b.cells)) return false;
+  }
+  return true;
 }
 
 function buildInitialState(): InternalState {
@@ -148,12 +196,80 @@ function bumpLastOpened(draft: DraftState, persisted: PersistedState): Persisted
   };
 }
 
+// -------------------- 编辑模式辅助 --------------------
+
+/**
+ * 把编辑模式的 snapshot 应用回当前 depth.cells，并清除 editing/editSnapshot。
+ * 如果回滚后 draft 与 persisted 完全一致，则同时清除 dirty 标记。
+ * 没有进入编辑模式 / 没有 snapshot / 没激活范围时直接返回原 draft。
+ */
+function rollbackEditing(draft: DraftState, persisted: PersistedState): DraftState {
+  if (!draft.editing && !draft.editSnapshot) return draft;
+  const snap = draft.editSnapshot;
+  let depths = draft.depths;
+  if (snap) {
+    const idx = depths.findIndex((d) => d.label === snap.label);
+    if (idx >= 0) {
+      const next = depths.slice();
+      next[idx] = { label: snap.label, cells: { ...snap.cells } };
+      depths = next;
+    }
+  }
+  const rolled: DraftState = {
+    ...draft,
+    depths,
+    editing: false,
+    editSnapshot: null,
+  };
+  const dirty = rolled.rangeId ? !draftMatchesPersisted(rolled, persisted) : false;
+  return { ...rolled, dirty };
+}
+
+/** 退出编辑模式但保留涂色（dirty 不变）。 */
+function commitEditing(draft: DraftState): DraftState {
+  if (!draft.editing && !draft.editSnapshot) return draft;
+  return { ...draft, editing: false, editSnapshot: null };
+}
+
 // -------------------- Actions --------------------
 
 export const rangeActions = {
+  // ====== 编辑模式开关 ======
+  beginEdit() {
+    setState((s) => {
+      const d = s.draft;
+      if (!d.rangeId || !d.currentDepthLabel) return s;
+      if (d.editing) return s;
+      const cur = d.depths.find((x) => x.label === d.currentDepthLabel);
+      if (!cur) return s;
+      const editSnapshot: EditSnapshot = {
+        label: cur.label,
+        cells: { ...cur.cells },
+      };
+      return { ...s, draft: { ...d, editing: true, editSnapshot } };
+    });
+  },
+
+  confirmEdit() {
+    setState((s) => {
+      const next = commitEditing(s.draft);
+      if (next === s.draft) return s;
+      return { ...s, draft: next };
+    });
+  },
+
+  cancelEdit() {
+    setState((s) => {
+      const next = rollbackEditing(s.draft, s.persisted);
+      if (next === s.draft) return s;
+      return { ...s, draft: next };
+    });
+  },
+
   // ====== 涂色 ======
   paintCell(hand: string, action: Action) {
     setState((s) => {
+      if (!s.draft.editing) return s;
       const draft = updateCurrentDepth(s.draft, (cells) => {
         const prev = cells[hand] ?? 'fold';
         if (prev === action) return cells;
@@ -193,12 +309,22 @@ export const rangeActions = {
     });
   },
 
+  setSeats(seats: number) {
+    const next = clampSeats(seats);
+    setState((s) => {
+      if (!s.draft.rangeId) return s;
+      if (s.draft.seats === next) return s;
+      return { ...s, draft: { ...s.draft, seats: next, dirty: true } };
+    });
+  },
+
   // ====== Depth 切换 ======
   switchDepth(label: string) {
     setState((s) => {
       if (s.draft.currentDepthLabel === label) return s;
       if (!s.draft.depths.some((d) => d.label === label)) return s;
-      const draft: DraftState = { ...s.draft, currentDepthLabel: label };
+      const base = rollbackEditing(s.draft, s.persisted);
+      const draft: DraftState = { ...base, currentDepthLabel: label };
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
   },
@@ -212,12 +338,13 @@ export const rangeActions = {
   applyDepthEdits(newDepths: DepthGrid[], saveAsDefault: boolean) {
     setState((s) => {
       if (!s.draft.rangeId) return s;
+      const base = commitEditing(s.draft);
       const depths = newDepths.map((d) => ({ label: d.label, cells: { ...d.cells } }));
-      const stillHas = depths.some((d) => d.label === s.draft.currentDepthLabel);
+      const stillHas = depths.some((d) => d.label === base.currentDepthLabel);
       const draft: DraftState = {
-        ...s.draft,
+        ...base,
         depths,
-        currentDepthLabel: stillHas ? s.draft.currentDepthLabel : depths[0]?.label ?? null,
+        currentDepthLabel: stillHas ? base.currentDepthLabel : depths[0]?.label ?? null,
         dirty: true,
       };
       let persisted = s.persisted;
@@ -234,10 +361,10 @@ export const rangeActions = {
    * 新建范围，立即激活并写入 persisted（无需另外保存）。
    * 返回新 range 的 id。
    */
-  newRange(name: string): string {
+  newRange(name: string, seats: number = DEFAULT_SEATS): string {
     let outId = '';
     setState((s) => {
-      const range = makeRange(name, s.persisted.defaultDepthLabels);
+      const range = makeRange(name, s.persisted.defaultDepthLabels, seats);
       outId = range.id;
       const draft = draftFromRange(range, range.depths[0]?.label ?? null);
       return {
@@ -256,6 +383,7 @@ export const rangeActions = {
     setState((s) => {
       const found = s.persisted.ranges.find((r) => r.id === id);
       if (!found) return s;
+      // 切换范围视为丢弃本次编辑会话；draftFromRange 已重置 editing/editSnapshot
       const draft = draftFromRange(found, s.persisted.lastOpenedDepthLabel);
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
@@ -267,19 +395,21 @@ export const rangeActions = {
   save() {
     setState((s) => {
       if (!s.draft.rangeId) return s;
+      const base = commitEditing(s.draft);
       const now = Date.now();
-      const name = s.draft.name.trim() || 'Untitled';
+      const name = base.name.trim() || 'Untitled';
       const ranges = s.persisted.ranges.map((r) =>
-        r.id === s.draft.rangeId
+        r.id === base.rangeId
           ? {
               ...r,
               name,
-              depths: s.draft.depths.map((d) => ({ label: d.label, cells: { ...d.cells } })),
+              seats: base.seats,
+              depths: base.depths.map((d) => ({ label: d.label, cells: { ...d.cells } })),
               updatedAt: now,
             }
           : r,
       );
-      const draft: DraftState = { ...s.draft, name, dirty: false };
+      const draft: DraftState = { ...base, name, dirty: false };
       return {
         ...s,
         draft,
@@ -294,17 +424,19 @@ export const rangeActions = {
   saveAs(name: string): string {
     let outId = '';
     setState((s) => {
-      const finalName = name.trim() || `${s.draft.name || 'Untitled'} (copy)`;
+      const base = commitEditing(s.draft);
+      const finalName = name.trim() || `${base.name || 'Untitled'} (copy)`;
       const now = Date.now();
       const range: RangeDoc = {
         id: newId(),
         name: finalName,
-        depths: s.draft.depths.map((d) => ({ label: d.label, cells: { ...d.cells } })),
+        seats: base.seats,
+        depths: base.depths.map((d) => ({ label: d.label, cells: { ...d.cells } })),
         createdAt: now,
         updatedAt: now,
       };
       outId = range.id;
-      const draft = draftFromRange(range, s.draft.currentDepthLabel);
+      const draft = draftFromRange(range, base.currentDepthLabel);
       return {
         ...s,
         draft,
@@ -337,6 +469,7 @@ export const rangeActions = {
       const range: RangeDoc = {
         id: newId(),
         name: `${src.name} (copy)`,
+        seats: clampSeats(src.seats),
         depths: src.depths.map((d) => ({ label: d.label, cells: { ...d.cells } })),
         createdAt: now,
         updatedAt: now,

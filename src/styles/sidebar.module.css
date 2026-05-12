@@ -13,6 +13,29 @@
   border-top: 1px solid var(--border);
 }
 
+/* 方案列表：默认白底，且列表内容紧贴左侧栏左边 */
+.rangeSection {
+  background: #ffffff;
+}
+
+.rangeSection .sectionHeader {
+  padding-left: 0;
+}
+
+.rangeSection .list {
+  padding-left: 0;
+}
+
+.rangeSection .btnRow {
+  padding-left: 0;
+}
+
+.rangeSection .item {
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 .sectionHeader {
   padding: 8px 10px 6px;
   display: flex;
@@ -159,7 +182,6 @@
   font-size: 11px;
   color: var(--text-2);
   display: flex;
-  justify-content: space-between;
   gap: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -208,7 +230,7 @@
 .depthItem {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 8px;
   padding: 10px 14px;
   border-radius: var(--radius-lg);

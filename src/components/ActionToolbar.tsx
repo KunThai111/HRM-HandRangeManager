@@ -4,11 +4,15 @@ import { rangeActions } from '@/store/useRangeStore';
 interface Props {
   current: Action;
   onChange: (a: Action) => void;
+  orientation?: 'horizontal' | 'vertical';
 }
 
-export function ActionToolbar({ current, onChange }: Props) {
+export function ActionToolbar({ current, onChange, orientation = 'horizontal' }: Props) {
+  const isVertical = orientation === 'vertical';
+  const className = `toolbar ${isVertical ? 'toolbar-vertical' : ''}`.trim();
+
   return (
-    <div className="toolbar">
+    <div className={className}>
       <div className="group" role="radiogroup" aria-label="动作">
         {ACTIONS.map((a) => {
           const active = a === current;
