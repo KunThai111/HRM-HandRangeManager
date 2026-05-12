@@ -1,0 +1,250 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+.section.collapsed {
+  flex: 0 0 auto;
+}
+
+.section + .section {
+  border-top: 1px solid var(--border);
+}
+
+.sectionHeader {
+  padding: 8px 10px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-1);
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sectionHeader:hover {
+  color: var(--text-1);
+}
+
+.sectionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: var(--text-1);
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transform-origin: 50% 50%;
+}
+
+.caret svg {
+  display: block;
+  transform-origin: 50% 50%;
+}
+
+.sectionHeader:hover .caret {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.caretCollapsed {
+  transform: rotate(-90deg);
+}
+
+.headerActiveName {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-0);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px 10px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  position: relative;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.item:hover {
+  background: var(--bg-3);
+  border-color: var(--border-strong);
+  color: var(--text-0);
+}
+
+.item.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(47, 111, 224, 0.25);
+}
+
+.itemTitle {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.itemTitle > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.itemTitle :global(.more) {
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.itemTitle :global(.more:hover) {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.item.active .itemTitle :global(.more) {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.item.active .itemTitle :global(.more:hover) {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.itemMeta {
+  font-size: 11px;
+  color: var(--text-2);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.item.active .itemMeta {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.empty {
+  padding: 14px 12px;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: center;
+}
+
+.list .empty {
+  background: var(--bg-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  list-style: none;
+}
+
+.btnRow {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.btnRow button {
+  width: 100%;
+}
+
+/* ====== Depth list ====== */
+.depthList {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px 10px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.depthItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-1);
+  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.depthItem:hover {
+  background: var(--bg-3);
+  border-color: var(--border-strong);
+  color: var(--text-0);
+}
+
+.depthItem.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(47, 111, 224, 0.25);
+}
+
+.depthLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+.depthBadge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.depthItem.active .depthBadge {
+  color: rgba(255, 255, 255, 0.82);
+}
