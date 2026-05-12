@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { ALL_HAND_KEYS, RANKS, cellKey } from '@/lib/hands';
-import { ACTION_COLOR, ACTION_TEXT_COLOR, type Action } from '@/lib/colors';
+import { resolveActionOrFold, type Action } from '@/lib/colors';
 import {
-  getCurrentDepthCells,
+  getCurrentCells,
   rangeActions,
+  useCustomActions,
   useDraft,
 } from '@/store/useRangeStore';
 import styles from '@/styles/grid.module.css';
@@ -14,8 +15,10 @@ interface Props {
 
 export function RangeGrid({ currentAction }: Props) {
   const draft = useDraft();
-  const cells = getCurrentDepthCells(draft);
-  const hasActive = !!draft.rangeId && !!draft.currentDepthLabel;
+  const customActions = useCustomActions();
+  const cells = getCurrentCells(draft);
+  const hasActive =
+    !!draft.rangeId && !!draft.currentDepthLabel && !!draft.currentSeatId;
   const editable = hasActive && draft.editing;
 
   const paintingRef = useRef<{ active: boolean; action: Action | null }>({
@@ -27,9 +30,14 @@ export function RangeGrid({ currentAction }: Props) {
   const apply = useCallback(
     (hand: string, action: Action) => {
       if (!editable) return;
+      // fold 等价「清空格子」，任何时候都可写；其它动作必须是已存在的 custom id
+      if (action !== 'fold') {
+        if (!action) return;
+        if (!customActions.some((c) => c.id === action)) return;
+      }
       rangeActions.paintCell(hand, action);
     },
-    [editable],
+    [editable, customActions],
   );
 
   useEffect(() => {
@@ -45,6 +53,10 @@ export function RangeGrid({ currentAction }: Props) {
     };
   }, []);
 
+  const hasSelectedAction =
+    currentAction === 'fold' ||
+    (!!currentAction && customActions.some((c) => c.id === currentAction));
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, hand: string) => {
     if (!editable) return;
     if (e.button === 2) {
@@ -53,6 +65,7 @@ export function RangeGrid({ currentAction }: Props) {
       return;
     }
     if (e.button !== 0) return;
+    if (!hasSelectedAction) return;
     e.preventDefault();
     paintingRef.current.active = true;
     paintingRef.current.action = currentAction;
@@ -73,6 +86,10 @@ export function RangeGrid({ currentAction }: Props) {
     const hand = el.dataset.hand;
     if (hand) apply(hand, paintingRef.current.action);
   };
+
+  // 非编辑模式下，若用户已选中一个有效动作 → 进入「筛选/高亮」模式：只有该动作的格子保持原色，其它格子置灰
+  const filterAction =
+    !editable && hasSelectedAction && currentAction !== 'fold' ? currentAction : null;
 
   const gridClass = [
     styles.grid,
@@ -95,14 +112,17 @@ export function RangeGrid({ currentAction }: Props) {
           const row = Math.floor(idx / RANKS.length);
           const col = idx % RANKS.length;
           const action: Action = cells[hand] ?? 'fold';
-          const bg = ACTION_COLOR[action];
-          const fg = ACTION_TEXT_COLOR[action];
+          const resolved = resolveActionOrFold(action, customActions);
+          const dimmed = filterAction !== null && action !== filterAction;
+          const bg = dimmed ? 'var(--bg-2)' : resolved.color;
+          const fg = dimmed ? 'var(--text-2)' : resolved.textColor;
           const k = cellKey(row, col);
+          const cellClass = `${styles.cell} ${dimmed ? styles.cellDimmed : ''}`.trim();
           return (
             <div
               key={k}
               data-hand={hand}
-              className={styles.cell}
+              className={cellClass}
               style={{ background: bg, color: fg }}
               onPointerDown={(e) => onPointerDown(e, hand)}
               onPointerEnter={() => onPointerEnter(hand)}

@@ -66,7 +66,7 @@ function ItemMenu({ range, onClose }: ItemMenuProps) {
 const COLLAPSE_KEY = 'nlhrange.rangeList.collapsed';
 
 export function RangeList() {
-  const { rangeId, name: draftName, dirty } = useDraft();
+  const { rangeId, name: draftName, seats: draftSeats, dirty } = useDraft();
   const ranges = useRangesSorted();
   const [menuId, setMenuId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -105,7 +105,7 @@ export function RangeList() {
 
   const headerText = collapsed
     ? rangeId
-      ? draftName || 'Untitled'
+      ? `${draftName || 'Untitled'} · ${clampSeats(draftSeats)} 人`
       : '方案列表'
     : '方案列表';
 

@@ -1,19 +1,37 @@
 import { useMemo } from 'react';
-import { ACTIONS, ACTION_COLOR, ACTION_LABEL, type Action } from '@/lib/colors';
+import { resolveActionOrFold } from '@/lib/colors';
 import { TOTAL_CELLS } from '@/lib/hands';
-import { getCurrentDepthCells, rangeActions, useDraft } from '@/store/useRangeStore';
+import {
+  getCurrentCells,
+  rangeActions,
+  useCustomActions,
+  useDraft,
+} from '@/store/useRangeStore';
 
 export function Stats() {
   const draft = useDraft();
-  const cells = getCurrentDepthCells(draft);
-  const canEdit = !!draft.rangeId && !!draft.currentDepthLabel;
+  const customActions = useCustomActions();
+  const cells = getCurrentCells(draft);
+  const canEdit =
+    !!draft.rangeId && !!draft.currentDepthLabel && !!draft.currentSeatId;
 
-  const counts = useMemo(() => {
-    const c: Record<Action, number> = { fold: 0, call: 0, raise: 0, mixed: 0 };
-    for (const key of Object.keys(cells)) c[cells[key]] += 1;
-    c.fold = TOTAL_CELLS - c.call - c.raise - c.mixed;
-    return c;
-  }, [cells]);
+  const { counts, legacyIds, foldCount } = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const ca of customActions) c[ca.id] = 0;
+    let nonFold = 0;
+    const legacy = new Set<string>();
+    for (const key of Object.keys(cells)) {
+      const id = cells[key];
+      c[id] = (c[id] ?? 0) + 1;
+      nonFold += 1;
+      if (!customActions.some((ca) => ca.id === id)) legacy.add(id);
+    }
+    return {
+      counts: c,
+      legacyIds: Array.from(legacy),
+      foldCount: TOTAL_CELLS - nonFold,
+    };
+  }, [cells, customActions]);
 
   return (
     <div className="stat-row" aria-label="统计">
@@ -49,13 +67,51 @@ export function Stats() {
           </button>
         )}
       </div>
-      {ACTIONS.map((a) => {
-        const n = counts[a];
+
+      <span className="stat-item">
+        <span
+          className="action-dot"
+          style={{ background: '#ffffff', border: '1px solid var(--border)' }}
+        />
+        <span className="stat-name">未标记</span>
+        <span>
+          {((foldCount / TOTAL_CELLS) * 100).toFixed(1)}%{' '}
+          <span style={{ color: 'var(--text-2)' }}>
+            ({foldCount}/{TOTAL_CELLS})
+          </span>
+        </span>
+      </span>
+
+      {customActions.map((ca) => {
+        const n = counts[ca.id] ?? 0;
         const pct = (n / TOTAL_CELLS) * 100;
         return (
-          <span key={a} className="stat-item">
-            <span className="action-dot" style={{ background: ACTION_COLOR[a] }} />
-            <span className="stat-name">{ACTION_LABEL[a]}</span>
+          <span key={ca.id} className="stat-item">
+            <span className="action-dot" style={{ background: ca.color }} />
+            <span className="stat-name">{ca.label}</span>
+            <span>
+              {pct.toFixed(1)}%{' '}
+              <span style={{ color: 'var(--text-2)' }}>
+                ({n}/{TOTAL_CELLS})
+              </span>
+            </span>
+          </span>
+        );
+      })}
+
+      {/* 兜底：旧数据中残留的内置 action（如 raise/call/mixed），用户已删除按钮但 cells 还在。
+          只在确实有数据时才显示，避免空 0%。 */}
+      {legacyIds.map((id) => {
+        const n = counts[id] ?? 0;
+        if (n === 0) return null;
+        const resolved = resolveActionOrFold(id, customActions);
+        const pct = (n / TOTAL_CELLS) * 100;
+        return (
+          <span key={id} className="stat-item" title="未注册的动作（来自旧数据）">
+            <span className="action-dot" style={{ background: resolved.color }} />
+            <span className="stat-name" style={{ color: 'var(--text-2)' }}>
+              {resolved.label}
+            </span>
             <span>
               {pct.toFixed(1)}%{' '}
               <span style={{ color: 'var(--text-2)' }}>

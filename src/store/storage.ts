@@ -1,9 +1,11 @@
-import type { Action } from '@/lib/colors';
+import type { Action, CustomAction } from '@/lib/colors';
 import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
+  type SeatBucket,
   emptyDepth,
 } from '@/lib/depths';
+import { isValidSeatId, seatsForCount } from '@/lib/seats';
 
 const STORAGE_KEY = 'nlh-range:v2';
 const LEGACY_KEY = 'nlh-range:v1';
@@ -26,6 +28,8 @@ export interface RangeDoc {
   /** 牌桌人数（2-9 人） */
   seats: number;
   depths: DepthGrid[];
+  /** 用户在编辑模式下添加的自定义动作按钮（按 range 维度独立）。 */
+  customActions: CustomAction[];
   createdAt: number;
   updatedAt: number;
 }
@@ -36,26 +40,124 @@ export interface PersistedState {
   ranges: RangeDoc[];
   lastOpenedRangeId: string | null;
   lastOpenedDepthLabel: string | null;
+  lastOpenedSeatId: string | null;
+  /** null = 总体（默认），string = 具体对战座位 id */
+  lastOpenedOpponentId: string | null;
 }
 
-function isAction(value: unknown): value is Action {
-  return value === 'fold' || value === 'call' || value === 'raise' || value === 'mixed';
+/**
+ * 判断字符串是否是合法的 action id。
+ * - 内置：fold / call / raise / mixed
+ * - 自定义：以 `c_` 开头的非空字符串（再细的合法性由编辑流程兜底；
+ *   即便 cells 引用了已被删除的 custom id，渲染层会兜底到 fold 颜色）。
+ */
+function isActionId(value: unknown): value is Action {
+  if (typeof value !== 'string' || !value) return false;
+  if (value === 'fold' || value === 'call' || value === 'raise' || value === 'mixed') return true;
+  return value.startsWith('c_');
 }
 
 function sanitizeCells(raw: unknown): Record<string, Action> {
   const out: Record<string, Action> = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (isAction(v) && v !== 'fold') out[k] = v;
+    if (isActionId(v) && v !== 'fold') out[k] = v;
   }
   return out;
 }
 
-function sanitizeDepth(raw: unknown): DepthGrid | null {
+function sanitizeCustomAction(raw: unknown): CustomAction | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id : '';
+  const label = typeof r.label === 'string' ? r.label.trim() : '';
+  const color = typeof r.color === 'string' ? r.color.trim() : '';
+  if (!id.startsWith('c_')) return null;
+  if (!label) return null;
+  if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) return null;
+  return { id, label, color };
+}
+
+function sanitizeCustomActions(raw: unknown): CustomAction[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: CustomAction[] = [];
+  for (const item of raw) {
+    const c = sanitizeCustomAction(item);
+    if (!c || seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push(c);
+  }
+  return out;
+}
+
+/** 把任意原始数据规范化成 SeatBucket；若整体为空返回 null（外层会跳过）。 */
+function sanitizeSeatBucket(raw: unknown): SeatBucket | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  // 新结构：{ overall, vs: { oppId: cells } }
+  if (r.overall !== undefined || r.vs !== undefined) {
+    const overall = sanitizeCells(r.overall);
+    const vs: Record<string, Record<string, Action>> = {};
+    if (r.vs && typeof r.vs === 'object') {
+      for (const [oppId, cells] of Object.entries(r.vs as Record<string, unknown>)) {
+        if (!isValidSeatId(oppId)) continue;
+        const sanitized = sanitizeCells(cells);
+        if (Object.keys(sanitized).length > 0) vs[oppId] = sanitized;
+      }
+    }
+    if (Object.keys(overall).length === 0 && Object.keys(vs).length === 0) return null;
+    return { overall, vs };
+  }
+
+  // 旧结构（v2 早期）：seats[seatId] 直接是 Record<HandKey, Action>
+  const overall = sanitizeCells(raw);
+  if (Object.keys(overall).length === 0) return null;
+  return { overall, vs: {} };
+}
+
+function sanitizeSeatsMap(raw: unknown): Record<string, SeatBucket> {
+  const out: Record<string, SeatBucket> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [seatId, bucketRaw] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isValidSeatId(seatId)) continue;
+    const bucket = sanitizeSeatBucket(bucketRaw);
+    if (bucket) out[seatId] = bucket;
+  }
+  return out;
+}
+
+/**
+ * 把单一 cells 升级为「按第一个座位归档」的 seats 映射（仅总体，无对战独立数据）。
+ * 用于 v1 / 极旧 v2 (`DepthGrid.cells`) 数据的兼容。
+ */
+function liftCellsToSeats(
+  cells: Record<string, Action>,
+  rangeSeats: number,
+): Record<string, SeatBucket> {
+  if (Object.keys(cells).length === 0) return {};
+  const order = seatsForCount(rangeSeats);
+  const firstSeat = order[0];
+  if (!firstSeat) return {};
+  return { [firstSeat]: { overall: cells, vs: {} } };
+}
+
+function sanitizeDepth(raw: unknown, rangeSeats: number): DepthGrid | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.label !== 'string' || !r.label) return null;
-  return { label: r.label, cells: sanitizeCells(r.cells) };
+
+  if (r.seats !== undefined) {
+    return { label: r.label, seats: sanitizeSeatsMap(r.seats) };
+  }
+  if (r.cells !== undefined) {
+    return {
+      label: r.label,
+      seats: liftCellsToSeats(sanitizeCells(r.cells), rangeSeats),
+    };
+  }
+  return { label: r.label, seats: {} };
 }
 
 function sanitizeRange(raw: unknown): RangeDoc | null {
@@ -66,8 +168,10 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
   if (typeof r.createdAt !== 'number' || typeof r.updatedAt !== 'number') return null;
   if (!Array.isArray(r.depths)) return null;
 
+  const seats = clampSeats(r.seats);
+
   const depths = r.depths
-    .map(sanitizeDepth)
+    .map((d) => sanitizeDepth(d, seats))
     .filter((d): d is DepthGrid => d !== null);
 
   // 去重 label（保留第一次出现）
@@ -84,8 +188,9 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
   return {
     id: r.id,
     name: r.name,
-    seats: clampSeats(r.seats),
+    seats,
     depths: deduped,
+    customActions: sanitizeCustomActions(r.customActions),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -93,7 +198,8 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
 
 /**
  * v1 旧结构：`{ version: 1, ranges: [{ id, stack, name, cells, createdAt, updatedAt }], lastOpenedStack, lastOpenedId }`
- * v2 新结构按 name 合并：同名 range 合并为一个 RangeDoc，按 stack 字段填入 depths。
+ * v2 新结构按 name 合并：同名 range 合并为一个 RangeDoc，按 stack 字段填入 depths，
+ * cells 暂归入 9 人桌 UTG 座位的「总体」（旧结构无座位 / 对战概念）。
  */
 function migrateV1(raw: unknown): PersistedState | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -112,11 +218,11 @@ function migrateV1(raw: unknown): PersistedState | null {
     if (!id || !name || !stack) continue;
 
     const cells = sanitizeCells(it.cells);
+    const seatsMap = liftCellsToSeats(cells, DEFAULT_SEATS);
     const existing = byName.get(name);
     if (existing) {
-      // 已存在同名 range：把当前 stack 作为深度追加（如重名则跳过）
       if (existing.depths.some((d) => d.label === stack)) continue;
-      existing.depths.push({ label: stack, cells });
+      existing.depths.push({ label: stack, seats: seatsMap });
       existing.updatedAt = Math.max(existing.updatedAt, updatedAt);
       existing.createdAt = Math.min(existing.createdAt, createdAt);
     } else {
@@ -124,7 +230,8 @@ function migrateV1(raw: unknown): PersistedState | null {
         id,
         name,
         seats: DEFAULT_SEATS,
-        depths: [{ label: stack, cells }],
+        depths: [{ label: stack, seats: seatsMap }],
+        customActions: [],
         createdAt,
         updatedAt,
       });
@@ -138,6 +245,8 @@ function migrateV1(raw: unknown): PersistedState | null {
     lastOpenedRangeId: null,
     lastOpenedDepthLabel:
       typeof r.lastOpenedStack === 'string' ? (r.lastOpenedStack as string) : null,
+    lastOpenedSeatId: null,
+    lastOpenedOpponentId: null,
   };
 }
 
@@ -166,11 +275,19 @@ export function loadState(): PersistedState {
             typeof parsed.lastOpenedDepthLabel === 'string'
               ? parsed.lastOpenedDepthLabel
               : null,
+          lastOpenedSeatId:
+            typeof parsed.lastOpenedSeatId === 'string' && isValidSeatId(parsed.lastOpenedSeatId)
+              ? parsed.lastOpenedSeatId
+              : null,
+          lastOpenedOpponentId:
+            typeof parsed.lastOpenedOpponentId === 'string' &&
+            isValidSeatId(parsed.lastOpenedOpponentId)
+              ? parsed.lastOpenedOpponentId
+              : null,
         };
       }
     }
 
-    // 尝试 v1 迁移
     const legacy = localStorage.getItem(LEGACY_KEY);
     if (legacy) {
       const migrated = migrateV1(JSON.parse(legacy));
@@ -194,6 +311,8 @@ function cloneEmpty(): PersistedState {
     ranges: [],
     lastOpenedRangeId: null,
     lastOpenedDepthLabel: null,
+    lastOpenedSeatId: null,
+    lastOpenedOpponentId: null,
   };
 }
 
@@ -224,6 +343,7 @@ export function makeRange(
     name: name.trim() || 'Untitled',
     seats: clampSeats(seats),
     depths: depthLabels.map((l) => emptyDepth(l)),
+    customActions: [],
     createdAt: now,
     updatedAt: now,
   };
