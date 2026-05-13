@@ -2,7 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/HRM-HandRangeManager/' : '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -13,4 +14,4 @@ export default defineConfig({
     port: 5173,
     open: false,
   },
-});
+}));
