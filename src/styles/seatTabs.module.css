@@ -81,7 +81,7 @@
 
 .tab.active {
   background: var(--accent-selected);
-  border-color: var(--accent-selected);
+  border-color: var(--accent-selected); 
   color: #fff;
   box-shadow: 0 2px 6px var(--accent-selected-shadow);
 }
