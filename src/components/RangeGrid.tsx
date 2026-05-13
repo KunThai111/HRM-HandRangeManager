@@ -88,6 +88,9 @@ export function RangeGrid({ currentAction }: Props) {
       // 非编辑模式：左键单击切换该格的放大态
       if (!hasActive) return;
       if (e.button !== 0) return;
+      // 未标注颜色（fold / 未设置）的格子不放大
+      const cellAction = cells[hand];
+      if (!cellAction || cellAction === 'fold') return;
       e.preventDefault();
       setZoomedHand((cur) => (cur === hand ? null : hand));
       return;
