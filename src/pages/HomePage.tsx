@@ -57,7 +57,7 @@ export function HomePage() {
               ♠
             </span>
             <span className={styles.quickBody}>
-              <span className={styles.quickTitle}>起手牌范围编辑器</span>
+              <span className={styles.quickTitle}>手牌编辑器</span>
               <span className={styles.quickDesc}>
                 13×13 起手牌表 · 多座位 / 多深度 / 自定义动作
               </span>
