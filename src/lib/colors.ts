@@ -14,6 +14,51 @@ export type BuiltinAction = (typeof BUILTIN_ACTIONS)[number];
 /** 动作 id：内置 4 个字面量或任意自定义 id（约定以 `c_` 开头）。 */
 export type Action = string;
 
+/**
+ * 「格子值」的字符串编码：
+ * - 完整（100%）：直接是 action id，如 `"raise"` / `"c_xxx"`
+ * - 部分填充（1-99%）：`"<id>@<weight>"`，例如 `"c_xxx@30"` 表示该格子动作色只占 30% 高度
+ *   剩余部分按 fold 背景渲染。`fold` 没有权重概念（fold 等价于「清空」，不入库）。
+ *
+ * 数据形态上 `CellValue` 仍是字符串，与旧版 `Record<string, Action>` 完全兼容；
+ * 老数据（不带 `@` 后缀）一律视为权重 100。
+ */
+export type CellValue = string;
+
+/** 取格子值的动作 id（去掉 `@weight` 后缀）。 */
+export function cellId(v: CellValue): Action {
+  const at = v.indexOf('@');
+  return at < 0 ? v : v.slice(0, at);
+}
+
+/** 取格子值的权重（1-100），未指定则默认 100。 */
+export function cellWeight(v: CellValue): number {
+  const at = v.indexOf('@');
+  if (at < 0) return 100;
+  const n = parseInt(v.slice(at + 1), 10);
+  if (!Number.isFinite(n)) return 100;
+  return clampWeight(n);
+}
+
+/** 把权重夹到 [1, 100] 整数区间。 */
+export function clampWeight(w: number): number {
+  if (!Number.isFinite(w)) return 100;
+  const n = Math.round(w);
+  if (n < 1) return 1;
+  if (n > 100) return 100;
+  return n;
+}
+
+/**
+ * 构造一个格子值：100% 时直接返回 id（保持紧凑、与旧版数据等价），
+ * 否则返回 `id@weight` 形式。`fold` 永远直接返回原 id（fold 没有权重）。
+ */
+export function makeCellValue(id: Action, weight: number = 100): CellValue {
+  if (id === 'fold') return id;
+  const w = clampWeight(weight);
+  return w >= 100 ? id : `${id}@${w}`;
+}
+
 /** 兼容旧调用：`ACTIONS` 仍指向内置 4 个。 */
 export const ACTIONS = BUILTIN_ACTIONS;
 

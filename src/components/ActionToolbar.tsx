@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  cellId,
   resolveActionOrFold,
   type Action,
   type CustomAction,
@@ -200,9 +201,10 @@ function useUsedActionIds(depths: ReturnType<typeof useDraft>['depths']): Set<st
   const ids = new Set<string>();
   for (const d of depths) {
     for (const bucket of Object.values(d.seats)) {
-      for (const v of Object.values(bucket.overall)) ids.add(v);
+      // 兼容 `id@weight` 形态：只收集 id 部分
+      for (const v of Object.values(bucket.overall)) ids.add(cellId(v));
       for (const cells of Object.values(bucket.vs)) {
-        for (const v of Object.values(cells)) ids.add(v);
+        for (const v of Object.values(cells)) ids.add(cellId(v));
       }
     }
   }

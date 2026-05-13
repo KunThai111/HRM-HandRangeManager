@@ -70,7 +70,7 @@
 
 .tab.active .indDot {
   background: #fff;
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-selected);
 }
 
 .tab:hover:not(:disabled) {
@@ -80,10 +80,10 @@
 }
 
 .tab.active {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-selected);
+  border-color: var(--accent-selected);
   color: #fff;
-  box-shadow: 0 2px 6px rgba(47, 111, 224, 0.25);
+  box-shadow: 0 2px 6px var(--accent-selected-shadow);
 }
 
 .tabLabel {

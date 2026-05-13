@@ -1,11 +1,15 @@
 import type { Action, CustomAction } from '@/lib/colors';
+import { cellId, cellWeight, makeCellValue } from '@/lib/colors';
 import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
   type SeatBucket,
   emptyDepth,
 } from '@/lib/depths';
+import { ALL_HAND_KEYS } from '@/lib/hands';
 import { isValidSeatId, seatsForCount } from '@/lib/seats';
+
+const VALID_HAND_KEYS = new Set<string>(ALL_HAND_KEYS);
 
 const STORAGE_KEY = 'nlh-range:v2';
 const LEGACY_KEY = 'nlh-range:v1';
@@ -30,6 +34,12 @@ export interface RangeDoc {
   depths: DepthGrid[];
   /** 用户在编辑模式下添加的自定义动作按钮（按 range 维度独立）。 */
   customActions: CustomAction[];
+  /**
+   * 单格备注：key = hand（如 `AKs`/`AA`/`AKo`），value = 用户输入的文字。
+   * 按 range 维度存储，所有深度/座位/对战共用同一份。
+   * 空字符串与缺失视为「无备注」，序列化时会被剔除。
+   */
+  notes: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }
@@ -46,22 +56,37 @@ export interface PersistedState {
 }
 
 /**
- * 判断字符串是否是合法的 action id。
+ * 判断 action id（去掉 `@weight` 后缀的部分）是否合法。
  * - 内置：fold / call / raise / mixed
  * - 自定义：以 `c_` 开头的非空字符串（再细的合法性由编辑流程兜底；
  *   即便 cells 引用了已被删除的 custom id，渲染层会兜底到 fold 颜色）。
  */
-function isActionId(value: unknown): value is Action {
-  if (typeof value !== 'string' || !value) return false;
-  if (value === 'fold' || value === 'call' || value === 'raise' || value === 'mixed') return true;
-  return value.startsWith('c_');
+function isValidActionId(id: string): boolean {
+  if (!id) return false;
+  if (id === 'fold' || id === 'call' || id === 'raise' || id === 'mixed') return true;
+  return id.startsWith('c_');
+}
+
+/**
+ * 规范化一个格子值：
+ * - 接受裸 id 字符串（旧数据，权重 100）或 `id@weight` 字符串
+ * - 非法值返回 null（外层丢弃）
+ * - 权重夹到 [1,100]，100 时退化为裸 id；fold 永远写裸 id（fold 不入库）
+ */
+function sanitizeCellValue(v: unknown): Action | null {
+  if (typeof v !== 'string' || !v) return null;
+  const id = cellId(v);
+  if (!isValidActionId(id)) return null;
+  if (id === 'fold') return null;
+  return makeCellValue(id, cellWeight(v));
 }
 
 function sanitizeCells(raw: unknown): Record<string, Action> {
   const out: Record<string, Action> = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (isActionId(v) && v !== 'fold') out[k] = v;
+    const sanitized = sanitizeCellValue(v);
+    if (sanitized !== null) out[k] = sanitized;
   }
   return out;
 }
@@ -87,6 +112,22 @@ function sanitizeCustomActions(raw: unknown): CustomAction[] {
     if (!c || seen.has(c.id)) continue;
     seen.add(c.id);
     out.push(c);
+  }
+  return out;
+}
+
+/**
+ * 单格备注表。只接受合法 hand key 作为索引，且 value 必须是非空字符串。
+ * 旧数据没有该字段时会得到 `{}`。
+ */
+function sanitizeNotes(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!VALID_HAND_KEYS.has(k)) continue;
+    if (typeof v !== 'string') continue;
+    const text = v.replace(/\s+$/u, '');
+    if (text) out[k] = text;
   }
   return out;
 }
@@ -191,6 +232,7 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
     seats,
     depths: deduped,
     customActions: sanitizeCustomActions(r.customActions),
+    notes: sanitizeNotes(r.notes),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -232,6 +274,7 @@ function migrateV1(raw: unknown): PersistedState | null {
         seats: DEFAULT_SEATS,
         depths: [{ label: stack, seats: seatsMap }],
         customActions: [],
+        notes: {},
         createdAt,
         updatedAt,
       });
@@ -344,6 +387,7 @@ export function makeRange(
     seats: clampSeats(seats),
     depths: depthLabels.map((l) => emptyDepth(l)),
     customActions: [],
+    notes: {},
     createdAt: now,
     updatedAt: now,
   };

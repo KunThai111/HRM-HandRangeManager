@@ -73,14 +73,22 @@
   cursor: pointer;
   transition:
     filter 0.08s,
-    transform 0.12s ease-out,
-    box-shadow 0.12s ease-out,
-    font-size 0.12s ease-out;
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    font-size 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    z-index 0s linear 0.28s;
   -webkit-tap-highlight-color: transparent;
 }
 
 .cell:hover {
   filter: brightness(1.12);
+}
+
+.cellLabel {
+  display: inline-block;
+  transform-origin: center;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 
 .cellDimmed {
@@ -97,12 +105,56 @@
   z-index: 5;
   transform: scale(2, 1.2);
   border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.28),
+    0 12px 32px rgba(0, 0, 0, 0.42);
   transition:
-    transform 0.12s ease-out,
-    box-shadow 0.12s ease-out;
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    z-index 0s linear 0s;
 }
 
 .cellZoomed:hover {
   filter: none;
+}
+
+/* 父级 .cellZoomed 做了 scale(2, 1.2) 非等比拉伸，
+   这里对内层文字做反向缩放，使字体最终视觉为等比放大 1.2 倍（不再变形）。
+   x: 1.2 / 2 = 0.6, y: 1.2 / 1.2 = 1 */
+.cellZoomed .cellLabel {
+  transform: scale(0.6, 1);
+}
+
+/* 放大态 + 部分填充时，左右两侧分别浮出 动作色% 与 fold%。
+   - 默认 opacity:0 不显示，仅当父级为 .cellZoomed 时淡入；
+   - 同样需要反向 scaleX(0.6) 抵消外层 scale(2,1.2) 的横向拉伸；
+   - 位置贴近格子两端，左侧文字落在动作色区，右侧文字落在 fold 区。 */
+.cellPctLeft,
+.cellPctRight {
+  position: absolute;
+  top: 50%;
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1) 0.1s;
+}
+
+.cellPctLeft {
+  left: 4%;
+  transform: translateY(-50%) scaleX(0.6);
+  transform-origin: left center;
+}
+
+.cellPctRight {
+  right: 4%;
+  transform: translateY(-50%) scaleX(0.6);
+  transform-origin: right center;
+}
+
+.cellZoomed .cellPctLeft,
+.cellZoomed .cellPctRight {
+  opacity: 0.92;
 }

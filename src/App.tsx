@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActionToolbar } from './components/ActionToolbar';
+import { RangeDetail } from './components/RangeDetail';
 import { RangeGrid } from './components/RangeGrid';
 import { SeatTabs } from './components/SeatTabs';
 import { Sidebar } from './components/Sidebar';
@@ -10,6 +11,11 @@ import { useCustomActions, useDraft } from './store/useRangeStore';
 export default function App() {
   // 空字符串 = 未选中任何动作；此时禁止涂色，需用户先在 ActionToolbar 添加自定义按钮
   const [action, setAction] = useState<Action>('');
+  /**
+   * 当前被放大查看的 hand（非编辑模式下点击有色格子触发）。
+   * 提升到 App 层是为了让 RangeDetail 也能读到，并据此显示/隐藏。
+   */
+  const [zoomedHand, setZoomedHand] = useState<string | null>(null);
   const draft = useDraft();
   const customActions = useCustomActions();
 
@@ -26,6 +32,11 @@ export default function App() {
     }
   }, [draft.rangeId, draft.editing, customActions, action]);
 
+  // 切换 range 时，自动清掉放大态（不同 range 下同名格子的涂色不一样）
+  useEffect(() => {
+    setZoomedHand(null);
+  }, [draft.rangeId]);
+
   return (
     <div className="app-shell">
       <div className="app-body">
@@ -33,8 +44,24 @@ export default function App() {
         <main className="app-main">
           <SeatTabs />
           <div className="work-area">
-            <RangeGrid currentAction={action} />
-            <ActionToolbar current={action} onChange={setAction} orientation="vertical" />
+            <RangeGrid
+              currentAction={action}
+              zoomedHand={zoomedHand}
+              onZoomChange={setZoomedHand}
+            />
+            <div className="work-right">
+              <ActionToolbar
+                current={action}
+                onChange={setAction}
+                orientation="vertical"
+              />
+              {zoomedHand && (
+                <RangeDetail
+                  hand={zoomedHand}
+                  onClose={() => setZoomedHand(null)}
+                />
+              )}
+            </div>
           </div>
           <Stats />
         </main>

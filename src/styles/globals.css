@@ -11,6 +11,8 @@
   --text-2: #7a8294;
   --accent: #2f6fe0;
   --accent-dim: #2f6fe0;
+  --accent-selected: #e63946;
+  --accent-selected-shadow: rgba(230, 57, 70, 0.28);
   --danger: #d9374a;
   --warn: #c98a00;
   --ok: #1f8a3a;
@@ -73,6 +75,17 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: #6ea0ff;
   border-color: #6ea0ff;
+}
+
+button.primary.edit-btn {
+  background: var(--accent-selected);
+  border-color: var(--accent-selected);
+  color: #fff;
+}
+
+button.primary.edit-btn:hover:not(:disabled) {
+  background: #f25563;
+  border-color: #f25563;
 }
 
 button.danger:hover:not(:disabled) {
@@ -156,6 +169,17 @@ input[type='text']:focus {
   gap: 12px;
   align-items: flex-start;
   margin-left: 10px;
+}
+
+/* 网格右侧的纵向卡片列：上半 ActionToolbar，下半 RangeDetail（按需出现）。 */
+.work-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  align-self: flex-start;
+  min-width: 180px;
 }
 
 .toolbar {
@@ -486,6 +510,10 @@ input[type='text']:focus {
   .work-area {
     flex-direction: column;
     align-items: stretch;
+  }
+  .work-right {
+    align-self: stretch;
+    min-width: 0;
   }
   .toolbar-vertical {
     align-self: stretch;

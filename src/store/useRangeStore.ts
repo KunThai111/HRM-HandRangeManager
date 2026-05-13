@@ -1,6 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import type { Action, CustomAction } from '@/lib/colors';
-import { newCustomActionId } from '@/lib/colors';
+import {
+  cellId,
+  clampWeight,
+  makeCellValue,
+  newCustomActionId,
+} from '@/lib/colors';
 import { ALL_HAND_KEYS } from '@/lib/hands';
 import {
   DEFAULT_DEPTH_LABELS,
@@ -63,6 +68,11 @@ export interface DraftState {
   depths: DepthGrid[];
   /** 当前 range 的自定义动作集合，跟随 range 一同存盘。 */
   customActions: CustomAction[];
+  /**
+   * 单格备注：key = hand id（如 `AKs`），value = 用户输入的文字。
+   * 按 range 维度共用，不区分深度/座位/对战。
+   */
+  notes: Record<string, string>;
   currentDepthLabel: string | null;
   currentSeatId: string | null;
   currentOpponentId: string | null;
@@ -82,6 +92,7 @@ const EMPTY_DRAFT: DraftState = {
   seats: DEFAULT_SEATS,
   depths: [],
   customActions: [],
+  notes: {},
   currentDepthLabel: null,
   currentSeatId: null,
   currentOpponentId: null,
@@ -138,6 +149,7 @@ function draftFromRange(
     seats: seatsCount,
     depths,
     customActions: (range.customActions ?? []).map((c) => ({ ...c })),
+    notes: { ...(range.notes ?? {}) },
     currentDepthLabel: label,
     currentSeatId: seatId,
     currentOpponentId: opponentId,
@@ -215,6 +227,19 @@ function customActionsEqual(a: CustomAction[], b: CustomAction[]): boolean {
   return true;
 }
 
+function notesEqual(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
 function draftMatchesPersisted(draft: DraftState, persisted: PersistedState): boolean {
   if (!draft.rangeId) return true;
   const src = persisted.ranges.find((r) => r.id === draft.rangeId);
@@ -222,6 +247,7 @@ function draftMatchesPersisted(draft: DraftState, persisted: PersistedState): bo
   if (src.name !== draft.name) return false;
   if (src.seats !== draft.seats) return false;
   if (!customActionsEqual(src.customActions ?? [], draft.customActions)) return false;
+  if (!notesEqual(src.notes ?? {}, draft.notes)) return false;
   if (src.depths.length !== draft.depths.length) return false;
   for (let i = 0; i < src.depths.length; i++) {
     const a = src.depths[i];
@@ -302,6 +328,14 @@ export function useCustomActions(): CustomAction[] {
     subscribe,
     () => getSnapshot().draft.customActions,
     () => getSnapshot().draft.customActions,
+  );
+}
+
+export function useNotes(): Record<string, string> {
+  return useSyncExternalStore(
+    subscribe,
+    () => getSnapshot().draft.notes,
+    () => getSnapshot().draft.notes,
   );
 }
 
@@ -486,17 +520,24 @@ export const rangeActions = {
   },
 
   // ====== 涂色 ======
-  paintCell(hand: string, action: Action) {
+  /**
+   * 给指定 hand 涂上动作色。
+   * - `weight` 默认 100（整格填充）；传 1-99 时按 `id@weight` 编码部分填充
+   * - `weight` 对 `fold` 无意义，会被忽略（fold 永远清空该格）
+   */
+  paintCell(hand: string, action: Action, weight: number = 100) {
     setState((s) => {
       if (!s.draft.editing) return s;
+      const nextValue =
+        action === 'fold' ? 'fold' : makeCellValue(action, clampWeight(weight));
       const opp = s.draft.currentOpponentId;
       const draft = withBucketChange(s.draft, (bucket) => {
         if (opp == null) {
           const prev = bucket.overall[hand] ?? 'fold';
-          if (prev === action) return bucket;
+          if (prev === nextValue) return bucket;
           const overall = { ...bucket.overall };
           if (action === 'fold') delete overall[hand];
-          else overall[hand] = action;
+          else overall[hand] = nextValue;
           return { overall, vs: bucket.vs };
         }
         const existing = bucket.vs[opp];
@@ -504,10 +545,10 @@ export const rangeActions = {
         const prev = base[hand] ?? 'fold';
         // 即使要求 fork（首次写未独立的对战），如果用户点的颜色和当前显示完全一致，
         // 视觉上没有变化，不做任何修改，避免无意义地分叉出独立表。
-        if (prev === action) return bucket;
+        if (prev === nextValue) return bucket;
         const next = { ...base };
         if (action === 'fold') delete next[hand];
-        else next[hand] = action;
+        else next[hand] = nextValue;
         return { overall: bucket.overall, vs: { ...bucket.vs, [opp]: next } };
       });
       if (draft === s.draft) return s;
@@ -561,6 +602,27 @@ export const rangeActions = {
       });
       if (draft === s.draft) return s;
       return { ...s, draft };
+    });
+  },
+
+  // ====== 单格备注 ======
+  /**
+   * 设置某个 hand 的备注文字。空串 / 纯空白会被视作「删除该备注」。
+   * 备注按 range 维度共用，所有 (深度, 座位, 对战) 都看到同一份。
+   * 不受编辑模式限制：备注是元数据，不属于网格涂色，可随时编辑（仍计 dirty）。
+   */
+  setNote(hand: string, text: string) {
+    setState((s) => {
+      if (!s.draft.rangeId) return s;
+      const trimmed = text.replace(/\s+$/u, '');
+      const cur = s.draft.notes[hand] ?? '';
+      if (cur === trimmed) return s;
+      const notes = { ...s.draft.notes };
+      if (trimmed) notes[hand] = trimmed;
+      else delete notes[hand];
+      const next: DraftState = { ...s.draft, notes };
+      const dirty = !draftMatchesPersisted(next, s.persisted);
+      return { ...s, draft: { ...next, dirty } };
     });
   },
 
@@ -731,6 +793,7 @@ export const rangeActions = {
               seats: base.seats,
               depths: base.depths.map(cloneDepth),
               customActions: base.customActions.map((c) => ({ ...c })),
+              notes: { ...base.notes },
               updatedAt: now,
             }
           : r,
@@ -759,6 +822,7 @@ export const rangeActions = {
         seats: base.seats,
         depths: base.depths.map(cloneDepth),
         customActions: base.customActions.map((c) => ({ ...c })),
+        notes: { ...base.notes },
         createdAt: now,
         updatedAt: now,
       };
@@ -804,6 +868,7 @@ export const rangeActions = {
         seats: clampSeats(src.seats),
         depths: src.depths.map(cloneDepth),
         customActions: (src.customActions ?? []).map((c) => ({ ...c })),
+        notes: { ...(src.notes ?? {}) },
         createdAt: now,
         updatedAt: now,
       };
@@ -894,7 +959,8 @@ export const rangeActions = {
         let changed = false;
         const out: Record<string, Action> = {};
         for (const [k, v] of Object.entries(cells)) {
-          if (v === id) {
+          // 兼容 `id@weight` 形态：只比对 id 部分
+          if (cellId(v) === id) {
             changed = true;
             continue;
           }
