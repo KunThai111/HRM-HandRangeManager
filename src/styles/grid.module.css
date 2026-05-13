@@ -24,6 +24,10 @@
   filter: none;
 }
 
+.gridReadOnly .cellZoomed {
+  cursor: default;
+}
+
 .gridEditing {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(47, 111, 224, 0.18);
@@ -67,7 +71,11 @@
   font-weight: 600;
   color: var(--text-1);
   cursor: pointer;
-  transition: filter 0.08s;
+  transition:
+    filter 0.08s,
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out,
+    font-size 0.12s ease-out;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -83,4 +91,21 @@
 .cellDimmed:hover {
   filter: none;
   opacity: 0.7;
+}
+
+.cellZoomed {
+  z-index: 5;
+  transform: scale(2.6);
+  font-size: clamp(16px, 2.4vw, 26px);
+  border-radius: 6px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.18),
+    0 0 0 2px var(--accent);
+  transition:
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+.cellZoomed:hover {
+  filter: none;
 }

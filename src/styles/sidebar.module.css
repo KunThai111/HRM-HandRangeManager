@@ -128,12 +128,25 @@
   border: 1px solid var(--border);
   color: var(--text-1);
   transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.item,
+.item * {
+  cursor: pointer;
 }
 
 .item:hover {
-  background: var(--bg-3);
-  border-color: var(--border-strong);
-  color: var(--text-0);
+  background: var(--bg-2);
+  border-color: var(--border);
+  color: var(--text-1);
+}
+
+.item.active:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .item.active {

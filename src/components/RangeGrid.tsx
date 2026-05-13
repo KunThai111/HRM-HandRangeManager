@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ALL_HAND_KEYS, RANKS, cellKey } from '@/lib/hands';
 import { resolveActionOrFold, type Action } from '@/lib/colors';
 import {
@@ -26,6 +26,32 @@ export function RangeGrid({ currentAction }: Props) {
     action: null,
   });
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const [zoomedHand, setZoomedHand] = useState<string | null>(null);
+
+  // 进入编辑模式或切换激活子表时，自动关闭放大态
+  useEffect(() => {
+    if (editable || !hasActive) setZoomedHand(null);
+  }, [editable, hasActive]);
+
+  // 非编辑模式下：ESC / 点击外部关闭放大
+  useEffect(() => {
+    if (zoomedHand === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setZoomedHand(null);
+    };
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (gridRef.current && target && !gridRef.current.contains(target)) {
+        setZoomedHand(null);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [zoomedHand]);
 
   const apply = useCallback(
     (hand: string, action: Action) => {
@@ -58,7 +84,14 @@ export function RangeGrid({ currentAction }: Props) {
     (!!currentAction && customActions.some((c) => c.id === currentAction));
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, hand: string) => {
-    if (!editable) return;
+    if (!editable) {
+      // 非编辑模式：左键单击切换该格的放大态
+      if (!hasActive) return;
+      if (e.button !== 0) return;
+      e.preventDefault();
+      setZoomedHand((cur) => (cur === hand ? null : hand));
+      return;
+    }
     if (e.button === 2) {
       e.preventDefault();
       apply(hand, 'fold');
@@ -117,18 +150,35 @@ export function RangeGrid({ currentAction }: Props) {
           const bg = dimmed ? 'var(--bg-2)' : resolved.color;
           const fg = dimmed ? 'var(--text-2)' : resolved.textColor;
           const k = cellKey(row, col);
-          const cellClass = `${styles.cell} ${dimmed ? styles.cellDimmed : ''}`.trim();
+          const zoomed = zoomedHand === hand;
+          const cellClass = [
+            styles.cell,
+            dimmed ? styles.cellDimmed : '',
+            zoomed ? styles.cellZoomed : '',
+          ]
+            .filter(Boolean)
+            .join(' ');
+          // 让放大锚点贴向 cell 在网格中的相对位置，保证缩放后不溢出 grid 容器
+          const originX = (col / (RANKS.length - 1)) * 100;
+          const originY = (row / (RANKS.length - 1)) * 100;
+          const cellStyle: React.CSSProperties = {
+            background: bg,
+            color: fg,
+          };
+          if (zoomed) {
+            cellStyle.transformOrigin = `${originX}% ${originY}%`;
+          }
           return (
             <div
               key={k}
               data-hand={hand}
               className={cellClass}
-              style={{ background: bg, color: fg }}
+              style={cellStyle}
               onPointerDown={(e) => onPointerDown(e, hand)}
               onPointerEnter={() => onPointerEnter(hand)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                apply(hand, 'fold');
+                if (editable) apply(hand, 'fold');
               }}
             >
               {hand}

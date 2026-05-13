@@ -15,21 +15,18 @@ export function Stats() {
   const canEdit =
     !!draft.rangeId && !!draft.currentDepthLabel && !!draft.currentSeatId;
 
-  const { counts, legacyIds, foldCount } = useMemo(() => {
+  const { counts, legacyIds } = useMemo(() => {
     const c: Record<string, number> = {};
     for (const ca of customActions) c[ca.id] = 0;
-    let nonFold = 0;
     const legacy = new Set<string>();
     for (const key of Object.keys(cells)) {
       const id = cells[key];
       c[id] = (c[id] ?? 0) + 1;
-      nonFold += 1;
       if (!customActions.some((ca) => ca.id === id)) legacy.add(id);
     }
     return {
       counts: c,
       legacyIds: Array.from(legacy),
-      foldCount: TOTAL_CELLS - nonFold,
     };
   }, [cells, customActions]);
 
@@ -68,33 +65,13 @@ export function Stats() {
         )}
       </div>
 
-      <span className="stat-item">
-        <span
-          className="action-dot"
-          style={{ background: '#ffffff', border: '1px solid var(--border)' }}
-        />
-        <span className="stat-name">未标记</span>
-        <span>
-          {((foldCount / TOTAL_CELLS) * 100).toFixed(1)}%{' '}
-          <span style={{ color: 'var(--text-2)' }}>
-            ({foldCount}/{TOTAL_CELLS})
-          </span>
-        </span>
-      </span>
-
       {customActions.map((ca) => {
         const n = counts[ca.id] ?? 0;
         const pct = (n / TOTAL_CELLS) * 100;
         return (
-          <span key={ca.id} className="stat-item">
+          <span key={ca.id} className="stat-item" title={ca.label}>
             <span className="action-dot" style={{ background: ca.color }} />
-            <span className="stat-name">{ca.label}</span>
-            <span>
-              {pct.toFixed(1)}%{' '}
-              <span style={{ color: 'var(--text-2)' }}>
-                ({n}/{TOTAL_CELLS})
-              </span>
-            </span>
+            <span>{pct.toFixed(1)}%</span>
           </span>
         );
       })}
@@ -107,17 +84,13 @@ export function Stats() {
         const resolved = resolveActionOrFold(id, customActions);
         const pct = (n / TOTAL_CELLS) * 100;
         return (
-          <span key={id} className="stat-item" title="未注册的动作（来自旧数据）">
+          <span
+            key={id}
+            className="stat-item"
+            title={`${resolved.label}（未注册的动作，来自旧数据）`}
+          >
             <span className="action-dot" style={{ background: resolved.color }} />
-            <span className="stat-name" style={{ color: 'var(--text-2)' }}>
-              {resolved.label}
-            </span>
-            <span>
-              {pct.toFixed(1)}%{' '}
-              <span style={{ color: 'var(--text-2)' }}>
-                ({n}/{TOTAL_CELLS})
-              </span>
-            </span>
+            <span style={{ color: 'var(--text-2)' }}>{pct.toFixed(1)}%</span>
           </span>
         );
       })}
