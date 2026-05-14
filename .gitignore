@@ -5,3 +5,9 @@ dist-ssr
 .DS_Store
 .vite
 *.log
+
+# Server: secrets and runtime data
+server/.env
+server/data/
+# Built frontend copied here by `npm run build:render` — generated, not source.
+server/public/

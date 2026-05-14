@@ -1,0 +1,49 @@
+# Render Blueprint — single service that hosts both the API and the prebuilt
+# SPA so Google OAuth cookies stay first-party (no CORS).
+#
+# Usage:
+#   1. Push this file to your GitHub repo (root).
+#   2. In Render: New + → Blueprint → pick this repo → Apply.
+#   3. After the service is created, open it and fill in the four
+#      `sync: false` env vars (Google OAuth credentials + session secret +
+#      FRONTEND_ORIGIN). Then trigger a manual deploy.
+#
+# Free-tier caveats:
+#   - Service spins down after 15 min of inactivity (cold start ~1 min).
+#   - Filesystem is ephemeral — server/data/hrm.db is wiped on every restart.
+#     Users will be prompted to click "Continue with Google" again, which is
+#     a one-tap operation since Google still remembers the consent.
+services:
+  - type: web
+    name: hrm
+    runtime: node
+    plan: free
+    region: singapore # change if you prefer oregon / frankfurt / ohio
+    branch: deploy/render
+    autoDeploy: true
+    # NODE_ENV defaults to production on Render, which makes `npm install`
+    # skip devDependencies. We need them for the build, hence --include=dev.
+    buildCommand: |
+      npm install --include=dev &&
+      npm --prefix server install --include=dev &&
+      npm run build:render
+    startCommand: npm run render:start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      # Filled in via Render UI (do NOT commit secrets):
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      # Both URLs below should be your Render public URL, e.g.
+      # https://hrm.onrender.com  (callback path is fixed by the server code).
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false

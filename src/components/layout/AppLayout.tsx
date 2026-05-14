@@ -1,5 +1,6 @@
 import { Link, Outlet } from 'react-router-dom';
 import logoUrl from '@/assets/Logo.png';
+import { UserMenu } from '@/components/UserMenu';
 import styles from '@/styles/appLayout.module.css';
 
 export function AppLayout() {
@@ -11,6 +12,7 @@ export function AppLayout() {
           <span className={styles.brandTitle}>HRM</span>
         </Link>
         <div className={styles.headerSpacer} />
+        <UserMenu />
       </header>
       <main className={styles.main}>
         <Outlet />

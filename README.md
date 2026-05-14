@@ -1,7 +1,12 @@
 # HRM · Hand Range Manager
 
-> 一个轻量、纯前端的德州扑克工具集 —— **起手牌范围编辑器** + **赛事盈亏记录**。
-> 全部数据保存在浏览器 `localStorage`，开箱即用，无需后端。
+> 德州扑克工具集 —— **起手牌范围编辑器** + **赛事盈亏记录**。
+> Range / Tournament 数据保存在浏览器 `localStorage`；登录鉴权由独立的 Node 后端（`server/`）通过 Google OAuth 提供。
+
+> **🔐 首次启动需配置 Google OAuth**，详见 [`server/SETUP-AUTH.md`](./server/SETUP-AUTH.md)。
+> 快速开始：`npm run install:all` → 配 `server/.env` → `npm run dev:all`。
+>
+> **🚀 部署到 Render（免费）**：参考 [`DEPLOY.md`](./DEPLOY.md)。
 
 [![Deploy to GitHub Pages](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml/badge.svg)](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml)
 
