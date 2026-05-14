@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { cellId, resolveActionOrFold } from '@/lib/colors';
+import { cellSegments, resolveActionOrFold } from '@/lib/colors';
 import { TOTAL_CELLS } from '@/lib/hands';
 import {
   getCurrentCells,
@@ -15,15 +15,17 @@ export function Stats() {
   const canEdit =
     !!draft.rangeId && !!draft.currentDepthLabel && !!draft.currentSeatId;
 
+  // 加权统计：每段贡献 weight/100 格；50% A + 40% B 的 1 格 → A 0.5 + B 0.4。
   const { counts, legacyIds } = useMemo(() => {
     const c: Record<string, number> = {};
     for (const ca of customActions) c[ca.id] = 0;
     const legacy = new Set<string>();
     for (const key of Object.keys(cells)) {
-      // 兼容 `id@weight` 形态：统计时仅按 id 计数（一格仍算 1 个）
-      const id = cellId(cells[key]);
-      c[id] = (c[id] ?? 0) + 1;
-      if (!customActions.some((ca) => ca.id === id)) legacy.add(id);
+      const segs = cellSegments(cells[key]);
+      for (const s of segs) {
+        c[s.id] = (c[s.id] ?? 0) + s.weight / 100;
+        if (!customActions.some((ca) => ca.id === s.id)) legacy.add(s.id);
+      }
     }
     return {
       counts: c,

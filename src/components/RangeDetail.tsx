@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cellId, cellWeight, resolveActionOrFold } from '@/lib/colors';
+import { cellSegments, resolveActionOrFold } from '@/lib/colors';
 import {
   getCurrentCells,
   rangeActions,
@@ -27,11 +27,9 @@ interface BreakdownItem {
 }
 
 /**
- * 当前激活子表里的某格在数据模型上只能存「单个动作 + 可选权重」，
- * 把它展开成 UI 友好的「动作占比」分段：
- * - fold / 未填涂   → 100% Fold
- * - 完整动作（权重 100）→ 单段 100% Action
- * - 部分填充（id@w，w<100）→ 第一段 = w% Action，第二段 = (100-w)% Fold
+ * 把当前激活子表里某格的字符串值展开成 UI 友好的「动作占比」分段：
+ * - 空 / fold → 单段 100% Fold
+ * - 单段或多段 → 按 segments 顺序展开；若总和 < 100，最后追加一段 Fold
  */
 function useBreakdown(hand: string): BreakdownItem[] {
   const draft = useDraft();
@@ -39,8 +37,8 @@ function useBreakdown(hand: string): BreakdownItem[] {
   const cells = getCurrentCells(draft);
   return useMemo<BreakdownItem[]>(() => {
     const fold = resolveActionOrFold('fold', customActions);
-    const raw = cells[hand];
-    if (!raw || raw === 'fold') {
+    const segs = cellSegments(cells[hand]);
+    if (segs.length === 0) {
       return [
         {
           key: 'fold',
@@ -52,26 +50,27 @@ function useBreakdown(hand: string): BreakdownItem[] {
         },
       ];
     }
-    const id = cellId(raw);
-    const w = cellWeight(raw);
-    const action = resolveActionOrFold(id, customActions);
-    const items: BreakdownItem[] = [
-      {
-        key: id,
+    const items: BreakdownItem[] = [];
+    let sum = 0;
+    segs.forEach((s, i) => {
+      const action = resolveActionOrFold(s.id, customActions);
+      items.push({
+        key: `${s.id}-${i}`,
         label: action.label,
         color: action.color,
         textColor: action.textColor,
-        weight: w,
-        isFold: id === 'fold',
-      },
-    ];
-    if (w < 100) {
+        weight: s.weight,
+        isFold: false,
+      });
+      sum += s.weight;
+    });
+    if (sum < 100) {
       items.push({
         key: 'fold-rest',
         label: fold.label,
         color: fold.color,
         textColor: fold.textColor,
-        weight: 100 - w,
+        weight: 100 - sum,
         isFold: true,
       });
     }

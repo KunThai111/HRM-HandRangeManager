@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ALL_HAND_KEYS, RANKS, cellKey } from '@/lib/hands';
 import {
-  cellId,
-  cellWeight,
+  cellSegments,
   resolveAction,
   resolveActionOrFold,
   type Action,
+  type CellSegment,
 } from '@/lib/colors';
 import {
   getCurrentCells,
@@ -37,21 +37,18 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     action: null,
   });
   const gridRef = useRef<HTMLDivElement | null>(null);
-  /** Cmd/Ctrl + 点击触发的权重输入弹窗状态。 */
-  const [weightTarget, setWeightTarget] = useState<{
+  /** Cmd/Ctrl + 点击触发的多动作占比弹窗：存当前编辑的 hand + 进入时的分段。 */
+  const [mixTarget, setMixTarget] = useState<{
     hand: string;
-    action: Action;
-    initial: number;
+    initial: CellSegment[];
   } | null>(null);
 
-  // 进入编辑模式或切换激活子表时，自动关闭放大态
   useEffect(() => {
     if (editable || !hasActive) {
       if (zoomedHand !== null) onZoomChange(null);
     }
   }, [editable, hasActive, zoomedHand, onZoomChange]);
 
-  // 非编辑模式下：ESC / 点击外部关闭放大
   useEffect(() => {
     if (zoomedHand === null) return;
     const onKey = (e: KeyboardEvent) => {
@@ -60,7 +57,6 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
-      // 点到网格内 / 详情面板内都不算「外部」，避免在详情面板里输入备注就把放大关掉
       if (gridRef.current && gridRef.current.contains(target)) return;
       if (target instanceof Element && target.closest('[data-range-detail]')) return;
       onZoomChange(null);
@@ -103,14 +99,18 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     currentAction === 'fold' ||
     (!!currentAction && customActions.some((c) => c.id === currentAction));
 
+  const openMixDialog = (hand: string) => {
+    const raw = cells[hand];
+    const initial = cellSegments(raw);
+    setMixTarget({ hand, initial });
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, hand: string) => {
     if (!editable) {
-      // 非编辑模式：左键单击切换该格的放大态
       if (!hasActive) return;
       if (e.button !== 0) return;
-      // 未标注颜色（fold / 未设置）的格子不放大；若已有其它放大格，关闭它
-      const cellAction = cells[hand];
-      if (!cellAction || cellAction === 'fold') {
+      const segs = cellSegments(cells[hand]);
+      if (segs.length === 0) {
         if (zoomedHand !== null) {
           e.preventDefault();
           onZoomChange(null);
@@ -127,17 +127,14 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
       return;
     }
     if (e.button !== 0) return;
-    if (!hasSelectedAction) return;
-    // Cmd（mac）/ Ctrl（win）+ 左键单击 → 弹出权重输入框，自定义该格的操作占比。
-    // fold 不支持部分填充（fold 等价清空，没有占比概念）。
-    if ((e.metaKey || e.ctrlKey) && currentAction !== 'fold') {
+    // Cmd / Ctrl + 左键：打开多动作占比对话框（不要求一定先选了画笔）
+    if (e.metaKey || e.ctrlKey) {
+      if (customActions.length === 0) return;
       e.preventDefault();
-      const existing = cells[hand];
-      const initial =
-        existing && cellId(existing) === currentAction ? cellWeight(existing) : 50;
-      setWeightTarget({ hand, action: currentAction, initial });
+      openMixDialog(hand);
       return;
     }
+    if (!hasSelectedAction) return;
     e.preventDefault();
     paintingRef.current.active = true;
     paintingRef.current.action = currentAction;
@@ -159,7 +156,8 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     if (hand) apply(hand, paintingRef.current.action);
   };
 
-  // 非编辑模式下，若用户已选中一个有效动作 → 进入「筛选/高亮」模式：只有该动作的格子保持原色，其它格子置灰
+  // 非编辑模式下，若用户已选中一个有效动作 → 进入「筛选/高亮」模式：
+  // 只有「该格包含 filterAction」的保持原色，其余置灰
   const filterAction =
     !editable && hasSelectedAction && currentAction !== 'fold' ? currentAction : null;
 
@@ -172,6 +170,8 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     .filter(Boolean)
     .join(' ');
 
+  const fold = resolveAction('fold')!;
+
   return (
     <div className={styles.gridWrap}>
       <div
@@ -180,7 +180,6 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
         onContextMenu={(e) => e.preventDefault()}
         onPointerMove={onTouchMove}
         onPointerDown={(e) => {
-          // 点击网格内空白间隙（非 cell 区域）→ 关闭放大态
           if (!editable && zoomedHand !== null && e.target === e.currentTarget) {
             onZoomChange(null);
           }
@@ -189,28 +188,54 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
         {ALL_HAND_KEYS.map((hand, idx) => {
           const row = Math.floor(idx / RANKS.length);
           const col = idx % RANKS.length;
-          const rawValue = cells[hand] ?? 'fold';
-          const actionId: Action = cellId(rawValue);
-          const weight = rawValue === 'fold' ? 100 : cellWeight(rawValue);
-          const resolved = resolveActionOrFold(actionId, customActions);
-          // 过滤模式下：只比对 id 部分（c_xxx@30 也应被视为 c_xxx 的命中）
-          const dimmed = filterAction !== null && actionId !== filterAction;
-          const fold = resolveAction('fold')!;
-          const foldColor = fold.color;
-          const foldTextColor = fold.textColor;
-          const fillColor = dimmed ? 'var(--bg-2)' : resolved.color;
-          // 部分填充：自左向右画动作色 0% → weight%，剩余为 fold 背景色
-          const isPartial = !dimmed && actionId !== 'fold' && weight < 100;
-          const bg = isPartial
-            ? `linear-gradient(to right, ${fillColor} 0% ${weight}%, ${foldColor} ${weight}% 100%)`
-            : fillColor;
-          // 文字色：部分填充时左右两段背景对比较强（动作色 + fold 背景），
-          // 用 fold 的深色文字在 fold 段保证可读
-          const fg = dimmed
-            ? 'var(--text-2)'
-            : isPartial
-              ? foldTextColor
-              : resolved.textColor;
+          const rawValue = cells[hand] ?? '';
+          const segs = cellSegments(rawValue);
+          const dimmed = filterAction !== null && !segs.some((s) => s.id === filterAction);
+
+          // 计算背景：N 段水平渐变 + 剩余 fold；空段视为整格 fold
+          // dim 时整格涂背景灰，避免颜色花
+          let bg: string;
+          let fg: string;
+          if (dimmed) {
+            bg = 'var(--bg-2)';
+            fg = 'var(--text-2)';
+          } else if (segs.length === 0) {
+            bg = fold.color;
+            fg = fold.textColor;
+          } else {
+            const stops: string[] = [];
+            let acc = 0;
+            for (const s of segs) {
+              const col = resolveActionOrFold(s.id, customActions).color;
+              const start = acc;
+              const end = Math.min(100, acc + s.weight);
+              stops.push(`${col} ${start}% ${end}%`);
+              acc = end;
+            }
+            if (acc < 100) {
+              stops.push(`${fold.color} ${acc}% 100%`);
+            }
+            // 单段 100%：直接用纯色（避免 gradient 渲染开销）
+            if (segs.length === 1 && segs[0].weight >= 100) {
+              const r = resolveActionOrFold(segs[0].id, customActions);
+              bg = r.color;
+              fg = r.textColor;
+            } else {
+              bg = `linear-gradient(to right, ${stops.join(', ')})`;
+              // 多段或部分填充：文字落在第一段上 → 用第一段的 textColor
+              const first = resolveActionOrFold(segs[0].id, customActions);
+              fg = first.textColor;
+            }
+          }
+
+          // 放大态：左右角标
+          // - 单段部分填充：左 = 动作色 weight%，右 = fold (100-w)%
+          // - 多段：左 = 第一段 id label + 权重，右 = 总 fold 比例（若有）
+          // - 全填充 / 全 fold：不显示
+          const totalActionWeight = segs.reduce((acc, s) => acc + s.weight, 0);
+          const isPartialSingle =
+            !dimmed && segs.length === 1 && segs[0].weight < 100;
+          const isMulti = !dimmed && segs.length > 1;
           const k = cellKey(row, col);
           const zoomed = zoomedHand === hand;
           const cellClass = [
@@ -220,7 +245,6 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
           ]
             .filter(Boolean)
             .join(' ');
-          // 让放大锚点贴向 cell 在网格中的相对位置，保证缩放后不溢出 grid 容器
           const originX = (col / (RANKS.length - 1)) * 100;
           const originY = (row / (RANKS.length - 1)) * 100;
           const cellStyle: React.CSSProperties = {
@@ -230,6 +254,28 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
           if (zoomed) {
             cellStyle.transformOrigin = `${originX}% ${originY}%`;
           }
+
+          // 角标内容
+          let leftPct: { color: string; text: string } | null = null;
+          let rightPct: { color: string; text: string } | null = null;
+          if (isPartialSingle) {
+            const r = resolveActionOrFold(segs[0].id, customActions);
+            leftPct = { color: r.textColor, text: `${segs[0].weight}%` };
+            rightPct = { color: fold.textColor, text: `${100 - segs[0].weight}%` };
+          } else if (isMulti) {
+            const first = resolveActionOrFold(segs[0].id, customActions);
+            leftPct = { color: first.textColor, text: `${segs[0].weight}%` };
+            const restFold = 100 - totalActionWeight;
+            if (restFold > 0) {
+              rightPct = { color: fold.textColor, text: `${restFold}%` };
+            } else {
+              // 没有 fold 剩余：右侧显示最后一段的 weight
+              const last = segs[segs.length - 1];
+              const lr = resolveActionOrFold(last.id, customActions);
+              rightPct = { color: lr.textColor, text: `${last.weight}%` };
+            }
+          }
+
           return (
             <div
               key={k}
@@ -244,23 +290,23 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
               }}
             >
               <span className={styles.cellLabel}>{hand}</span>
-              {isPartial && (
-                <>
-                  <span
-                    className={styles.cellPctLeft}
-                    style={{ color: resolved.textColor }}
-                    aria-hidden
-                  >
-                    {weight}%
-                  </span>
-                  <span
-                    className={styles.cellPctRight}
-                    style={{ color: foldTextColor }}
-                    aria-hidden
-                  >
-                    {100 - weight}%
-                  </span>
-                </>
+              {leftPct && (
+                <span
+                  className={styles.cellPctLeft}
+                  style={{ color: leftPct.color }}
+                  aria-hidden
+                >
+                  {leftPct.text}
+                </span>
+              )}
+              {rightPct && (
+                <span
+                  className={styles.cellPctRight}
+                  style={{ color: rightPct.color }}
+                  aria-hidden
+                >
+                  {rightPct.text}
+                </span>
               )}
             </div>
           );
@@ -278,15 +324,16 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
           </div>
         </div>
       )}
-      {weightTarget && editable && (
+      {mixTarget && editable && (
         <WeightDialog
-          hand={weightTarget.hand}
-          action={resolveActionOrFold(weightTarget.action, customActions)}
-          initial={weightTarget.initial}
-          onCancel={() => setWeightTarget(null)}
-          onConfirm={(w) => {
-            apply(weightTarget.hand, weightTarget.action, w);
-            setWeightTarget(null);
+          hand={mixTarget.hand}
+          customActions={customActions}
+          initial={mixTarget.initial}
+          primaryAction={currentAction || null}
+          onCancel={() => setMixTarget(null)}
+          onConfirm={(segs) => {
+            rangeActions.paintCellMix(mixTarget.hand, segs);
+            setMixTarget(null);
           }}
         />
       )}

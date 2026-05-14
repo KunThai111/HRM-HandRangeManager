@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  cellId,
+  cellSegments,
   resolveActionOrFold,
   type Action,
   type CustomAction,
@@ -199,12 +199,14 @@ export function ActionToolbar({ current, onChange, orientation = 'horizontal' }:
 /** 收集 draft 中所有 cells 引用过的 action id（用于「删除前是否会丢数据」提示）。 */
 function useUsedActionIds(depths: ReturnType<typeof useDraft>['depths']): Set<string> {
   const ids = new Set<string>();
+  const collect = (v: Action) => {
+    for (const s of cellSegments(v)) ids.add(s.id);
+  };
   for (const d of depths) {
     for (const bucket of Object.values(d.seats)) {
-      // 兼容 `id@weight` 形态：只收集 id 部分
-      for (const v of Object.values(bucket.overall)) ids.add(cellId(v));
+      for (const v of Object.values(bucket.overall)) collect(v);
       for (const cells of Object.values(bucket.vs)) {
-        for (const v of Object.values(cells)) ids.add(cellId(v));
+        for (const v of Object.values(cells)) collect(v);
       }
     }
   }

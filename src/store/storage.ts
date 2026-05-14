@@ -1,5 +1,5 @@
 import type { Action, CustomAction } from '@/lib/colors';
-import { cellId, cellWeight, makeCellValue } from '@/lib/colors';
+import { cellSegments, makeCellValueFromSegments } from '@/lib/colors';
 import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
@@ -81,16 +81,17 @@ function isValidActionId(id: string): boolean {
 
 /**
  * 规范化一个格子值：
- * - 接受裸 id 字符串（旧数据，权重 100）或 `id@weight` 字符串
- * - 非法值返回 null（外层丢弃）
- * - 权重夹到 [1,100]，100 时退化为裸 id；fold 永远写裸 id（fold 不入库）
+ * - 接受裸 id（旧数据，权重 100）、`id@weight`（旧单段部分填充）或新版多段 `id1@w1+id2@w2+...`
+ * - 过滤每段的非法 id（不是内置动作也不以 `c_` 开头），剩余空 → null
+ * - 各段权重夹到 [1,100]，总和 > 100 时从尾部裁剪
+ * - 单段 100% 退化为裸 id；fold（清空）永远不入库 → null
  */
 function sanitizeCellValue(v: unknown): Action | null {
   if (typeof v !== 'string' || !v) return null;
-  const id = cellId(v);
-  if (!isValidActionId(id)) return null;
-  if (id === 'fold') return null;
-  return makeCellValue(id, cellWeight(v));
+  const segs = cellSegments(v).filter((s) => isValidActionId(s.id));
+  if (segs.length === 0) return null;
+  const out = makeCellValueFromSegments(segs);
+  return out === 'fold' ? null : out;
 }
 
 function sanitizeCells(raw: unknown): Record<string, Action> {

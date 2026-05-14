@@ -15,29 +15,21 @@ export type BuiltinAction = (typeof BUILTIN_ACTIONS)[number];
 export type Action = string;
 
 /**
- * 「格子值」的字符串编码：
- * - 完整（100%）：直接是 action id，如 `"raise"` / `"c_xxx"`
- * - 部分填充（1-99%）：`"<id>@<weight>"`，例如 `"c_xxx@30"` 表示该格子动作色只占 30% 高度
- *   剩余部分按 fold 背景渲染。`fold` 没有权重概念（fold 等价于「清空」，不入库）。
+ * 「格子值」的字符串编码（支持多动作混合）：
  *
- * 数据形态上 `CellValue` 仍是字符串，与旧版 `Record<string, Action>` 完全兼容；
- * 老数据（不带 `@` 后缀）一律视为权重 100。
+ * - 完整（单动作 100%）：直接是 action id，如 `"raise"` / `"c_xxx"`
+ * - 单动作部分填充（1-99%）：`"<id>@<weight>"`，例如 `"c_xxx@30"`
+ * - 多动作混合：`"<id1>@<w1>+<id2>@<w2>+..."`，例如 `"c_a@50+c_b@40+c_c@10"`
+ *   表示 A 占 50%、B 占 40%、C 占 10%；如果各段权重之和小于 100，剩余按 fold 渲染。
+ *
+ * `fold` 没有权重概念（fold 等价于「清空」，不入库）。
+ * 数据形态上 `CellValue` 仍是字符串：旧的单段格式（`c_x` / `c_x@30`）完全兼容。
  */
 export type CellValue = string;
 
-/** 取格子值的动作 id（去掉 `@weight` 后缀）。 */
-export function cellId(v: CellValue): Action {
-  const at = v.indexOf('@');
-  return at < 0 ? v : v.slice(0, at);
-}
-
-/** 取格子值的权重（1-100），未指定则默认 100。 */
-export function cellWeight(v: CellValue): number {
-  const at = v.indexOf('@');
-  if (at < 0) return 100;
-  const n = parseInt(v.slice(at + 1), 10);
-  if (!Number.isFinite(n)) return 100;
-  return clampWeight(n);
+export interface CellSegment {
+  id: Action;
+  weight: number;
 }
 
 /** 把权重夹到 [1, 100] 整数区间。 */
@@ -50,13 +42,95 @@ export function clampWeight(w: number): number {
 }
 
 /**
- * 构造一个格子值：100% 时直接返回 id（保持紧凑、与旧版数据等价），
- * 否则返回 `id@weight` 形式。`fold` 永远直接返回原 id（fold 没有权重）。
+ * 解析格子值为分段数组。
+ * - 空 / fold / 非法 → 返回 `[]`
+ * - 老格式 `id` / `id@w` → 单元素数组
+ * - 新格式 `id1@w1+id2@w2+...` → 多元素数组（按出现顺序）
+ *
+ * 不做总和归一：调用方按需自行处理。重复 id 会被合并（权重相加，仍夹在 1-100）。
+ */
+export function cellSegments(v: CellValue | undefined | null): CellSegment[] {
+  if (!v || v === 'fold') return [];
+  const parts = v.split('+');
+  const merged = new Map<string, number>();
+  for (const part of parts) {
+    if (!part) continue;
+    const at = part.indexOf('@');
+    const id = at < 0 ? part : part.slice(0, at);
+    if (!id || id === 'fold') continue;
+    const wRaw = at < 0 ? 100 : parseInt(part.slice(at + 1), 10);
+    const w = Number.isFinite(wRaw) ? wRaw : 100;
+    const next = (merged.get(id) ?? 0) + w;
+    merged.set(id, next);
+  }
+  const out: CellSegment[] = [];
+  for (const [id, w] of merged.entries()) {
+    out.push({ id, weight: clampWeight(w) });
+  }
+  return out;
+}
+
+/** 取格子值的「主」动作 id：多段时返回第一段的 id；fold / 空返回 `'fold'`。 */
+export function cellId(v: CellValue): Action {
+  const segs = cellSegments(v);
+  if (segs.length === 0) return 'fold';
+  return segs[0].id;
+}
+
+/**
+ * 取格子值的总权重（所有动作段之和，1-100）。
+ * 单段格式与旧行为完全一致；空 / fold 返回 100（语义：100% fold）。
+ */
+export function cellWeight(v: CellValue): number {
+  const segs = cellSegments(v);
+  if (segs.length === 0) return 100;
+  let sum = 0;
+  for (const s of segs) sum += s.weight;
+  return clampWeight(sum);
+}
+
+/**
+ * 用分段数组构造紧凑的格子值字符串：
+ * - 空 / 全 fold → `'fold'`
+ * - 单段 100% → 裸 id（与旧版完全等价）
+ * - 单段 1-99% → `id@w`
+ * - 多段 → `id1@w1+id2@w2+...`，权重按 [1,100] 夹紧，单段为 0 会被丢弃
+ * - 重复 id 会被合并；总和会被夹到 ≤100（超出部分丢弃最后一段的多余权重）
+ */
+export function makeCellValueFromSegments(segments: readonly CellSegment[]): CellValue {
+  const merged = new Map<string, number>();
+  for (const s of segments) {
+    if (!s.id || s.id === 'fold') continue;
+    if (!Number.isFinite(s.weight) || s.weight <= 0) continue;
+    const w = Math.round(s.weight);
+    if (w <= 0) continue;
+    merged.set(s.id, (merged.get(s.id) ?? 0) + w);
+  }
+  // 总和不可 > 100：从尾部裁剪
+  let remaining = 100;
+  const kept: CellSegment[] = [];
+  for (const [id, w] of merged.entries()) {
+    if (remaining <= 0) break;
+    const take = Math.min(w, remaining);
+    if (take <= 0) continue;
+    kept.push({ id, weight: take });
+    remaining -= take;
+  }
+  if (kept.length === 0) return 'fold';
+  if (kept.length === 1) {
+    const only = kept[0];
+    return only.weight >= 100 ? only.id : `${only.id}@${only.weight}`;
+  }
+  return kept.map((s) => `${s.id}@${s.weight}`).join('+');
+}
+
+/**
+ * 兼容旧 API：单动作 + 权重 → CellValue。
+ * 内部走多段编码，结果与旧版一致：`fold` 返回 `'fold'`，100% 返回裸 id，1-99% 返回 `id@w`。
  */
 export function makeCellValue(id: Action, weight: number = 100): CellValue {
-  if (id === 'fold') return id;
-  const w = clampWeight(weight);
-  return w >= 100 ? id : `${id}@${w}`;
+  if (id === 'fold') return 'fold';
+  return makeCellValueFromSegments([{ id, weight: clampWeight(weight) }]);
 }
 
 /** 兼容旧调用：`ACTIONS` 仍指向内置 4 个。 */

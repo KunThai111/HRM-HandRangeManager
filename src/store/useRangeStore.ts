@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
-import type { Action, CustomAction } from '@/lib/colors';
+import type { Action, CellSegment, CustomAction } from '@/lib/colors';
 import {
-  cellId,
+  cellSegments,
   clampWeight,
   makeCellValue,
+  makeCellValueFromSegments,
   newCustomActionId,
 } from '@/lib/colors';
 import { ALL_HAND_KEYS } from '@/lib/hands';
@@ -433,6 +434,43 @@ function withBucketChange(
   return { ...draft, depths, dirty: true };
 }
 
+/**
+ * 通用「写一格」的内部实现：根据 currentOpponentId 决定写入总体还是对战 vs 表，
+ * 并对「写入后值未变」做 short-circuit（避免无意义分叉对战独立表）。
+ * - isFold=true → 从对应表里删除该 hand（fold 不入库）
+ * - 否则把 `value` 写到该 hand
+ */
+function applyCellWrite(
+  s: InternalState,
+  hand: string,
+  isFold: boolean,
+  value: Action,
+): InternalState {
+  const opp = s.draft.currentOpponentId;
+  const draft = withBucketChange(s.draft, (bucket) => {
+    if (opp == null) {
+      const prev = bucket.overall[hand] ?? 'fold';
+      const nextValue = isFold ? 'fold' : value;
+      if (prev === nextValue) return bucket;
+      const overall = { ...bucket.overall };
+      if (isFold) delete overall[hand];
+      else overall[hand] = value;
+      return { overall, vs: bucket.vs };
+    }
+    const existing = bucket.vs[opp];
+    const base = existing ?? bucket.overall;
+    const prev = base[hand] ?? 'fold';
+    const nextValue = isFold ? 'fold' : value;
+    if (prev === nextValue) return bucket;
+    const next = { ...base };
+    if (isFold) delete next[hand];
+    else next[hand] = value;
+    return { overall: bucket.overall, vs: { ...bucket.vs, [opp]: next } };
+  });
+  if (draft === s.draft) return s;
+  return { ...s, draft };
+}
+
 function bumpLastOpened(draft: DraftState, persisted: PersistedState): PersistedState {
   const next: PersistedState = {
     ...persisted,
@@ -580,29 +618,21 @@ export const rangeActions = {
       if (!s.draft.editing) return s;
       const nextValue =
         action === 'fold' ? 'fold' : makeCellValue(action, clampWeight(weight));
-      const opp = s.draft.currentOpponentId;
-      const draft = withBucketChange(s.draft, (bucket) => {
-        if (opp == null) {
-          const prev = bucket.overall[hand] ?? 'fold';
-          if (prev === nextValue) return bucket;
-          const overall = { ...bucket.overall };
-          if (action === 'fold') delete overall[hand];
-          else overall[hand] = nextValue;
-          return { overall, vs: bucket.vs };
-        }
-        const existing = bucket.vs[opp];
-        const base = existing ?? bucket.overall;
-        const prev = base[hand] ?? 'fold';
-        // 即使要求 fork（首次写未独立的对战），如果用户点的颜色和当前显示完全一致，
-        // 视觉上没有变化，不做任何修改，避免无意义地分叉出独立表。
-        if (prev === nextValue) return bucket;
-        const next = { ...base };
-        if (action === 'fold') delete next[hand];
-        else next[hand] = nextValue;
-        return { overall: bucket.overall, vs: { ...bucket.vs, [opp]: next } };
-      });
-      if (draft === s.draft) return s;
-      return { ...s, draft };
+      return applyCellWrite(s, hand, action === 'fold', nextValue);
+    });
+  },
+
+  /**
+   * 把一格设为多个动作的混合占比（如 50% A + 40% B + 10% C）。
+   * - `segments` 为空 / 总权重为 0 → 视为 fold（清空该格）
+   * - 各段权重在内部夹到 [1,100]，总和 > 100 时从尾部裁剪
+   */
+  paintCellMix(hand: string, segments: readonly CellSegment[]) {
+    setState((s) => {
+      if (!s.draft.editing) return s;
+      const value = makeCellValueFromSegments(segments);
+      const isFold = value === 'fold';
+      return applyCellWrite(s, hand, isFold, isFold ? 'fold' : value);
     });
   },
 
@@ -1015,12 +1045,17 @@ export const rangeActions = {
         let changed = false;
         const out: Record<string, Action> = {};
         for (const [k, v] of Object.entries(cells)) {
-          // 兼容 `id@weight` 形态：只比对 id 部分
-          if (cellId(v) === id) {
-            changed = true;
+          // 多段兼容：从混合中剔除被删 id；剔除后若变 fold 则丢弃整格
+          const segs = cellSegments(v);
+          if (!segs.some((s) => s.id === id)) {
+            out[k] = v;
             continue;
           }
-          out[k] = v;
+          changed = true;
+          const kept = segs.filter((s) => s.id !== id);
+          if (kept.length === 0) continue;
+          const nextValue = makeCellValueFromSegments(kept);
+          if (nextValue !== 'fold') out[k] = nextValue;
         }
         return changed ? out : cells;
       };
