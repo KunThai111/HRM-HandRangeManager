@@ -8,9 +8,8 @@
     "dev:server": "npm --prefix server run dev",
     "dev:all": "concurrently -k -n web,api -c blue,magenta \"npm run dev\" \"npm run dev:server\"",
     "build": "tsc --noEmit && vite build",
-    "build:render": "tsc --noEmit && cross-env VITE_DEPLOY_TARGET=render vite build && rimraf server/public && copyfiles -u 1 \"dist/**/*\" server/public",
-    "render:postinstall": "npm --prefix server install --include=dev && npm run build:render",
-    "render:start": "npm --prefix server run start:prod",
+    "build:server": "tsc --noEmit && cross-env VITE_DEPLOY_TARGET=server vite build && rimraf server/public && copyfiles -u 1 \"dist/**/*\" server/public",
+    "start:server": "npm --prefix server run start:prod",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && npm --prefix server run typecheck",
     "install:all": "npm install && npm --prefix server install"

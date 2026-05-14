@@ -9,5 +9,5 @@ dist-ssr
 # Server: secrets and runtime data
 server/.env
 server/data/
-# Built frontend copied here by `npm run build:render` — generated, not source.
+# Built frontend copied here by `npm run build:server` — generated, not source.
 server/public/

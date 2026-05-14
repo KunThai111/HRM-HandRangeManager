@@ -3,12 +3,12 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
 // VITE_DEPLOY_TARGET selects the build base path:
-//   - "render" (or any same-origin host): "/"
+//   - "server" / "railway" / "root": "/" (any same-origin host like Railway)
 //   - default (GitHub Pages): "/HRM-HandRangeManager/"
 function resolveBase(command: 'build' | 'serve'): string {
   if (command !== 'build') return '/';
   const target = process.env.VITE_DEPLOY_TARGET;
-  if (target === 'render' || target === 'root') return '/';
+  if (target === 'server' || target === 'railway' || target === 'root') return '/';
   return '/HRM-HandRangeManager/';
 }
 

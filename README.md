@@ -6,7 +6,7 @@
 > **🔐 首次启动需配置 Google OAuth**，详见 [`server/SETUP-AUTH.md`](./server/SETUP-AUTH.md)。
 > 快速开始：`npm run install:all` → 配 `server/.env` → `npm run dev:all`。
 >
-> **🚀 部署到 Render（免费）**：参考 [`DEPLOY.md`](./DEPLOY.md)。
+> **🚀 部署到 Railway（约 $5/月，含 Volume 数据持久化）**：参考 [`DEPLOY.md`](./DEPLOY.md)。
 
 [![Deploy to GitHub Pages](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml/badge.svg)](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml)
 
