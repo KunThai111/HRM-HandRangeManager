@@ -10,7 +10,12 @@
 
 [![Deploy to GitHub Pages](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml/badge.svg)](https://github.com/KunThai111/HRM-HandRangeManager/actions/workflows/deploy.yml)
 
-🔗 **在线访问**：<https://kunthai111.github.io/HRM-HandRangeManager/>
+## 🔗 在线访问
+
+| 版本 | 链接 | 说明 |
+|---|---|---|
+| **Railway 完整版** | <https://hrm-handrangemanager-production.up.railway.app> | 含 Google 登录、数据持久化（推荐） |
+| GitHub Pages 纯前端版 | <https://kunthai111.github.io/HRM-HandRangeManager/> | 无登录，仅 `localStorage` 本地存储 |
 
 ---
 
