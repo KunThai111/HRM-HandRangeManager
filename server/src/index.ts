@@ -8,6 +8,16 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from './env.js';
 import { passport } from './auth.js';
+import {
+  getSettingsForUser,
+  listRangesForUser,
+  listTournamentsForUser,
+  pushRangesForUser,
+  pushSettingsForUser,
+  pushTournamentsForUser,
+  type SyncItemInput,
+  type SyncItemRow,
+} from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProd = env.NODE_ENV === 'production';
@@ -99,6 +109,89 @@ app.post('/auth/logout', (req, res, next) => {
       res.clearCookie('hrm.sid');
       res.json({ ok: true });
     });
+  });
+});
+
+// --- Sync API -----------------------------------------------------------------
+// 客户端模型：localStorage 是真相源（离线可用），登录后通过 LWW 与服务端镜像同步。
+// 协议尽量薄：服务端不解读 payload 结构，只比 updatedAt（行级）做增量合并。
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.isAuthenticated() || !req.user) {
+    res.status(401).json({ error: 'unauthenticated' });
+    return;
+  }
+  next();
+}
+
+function rowsToWire(rows: SyncItemRow[]): Array<{
+  id: string;
+  updatedAt: number;
+  deleted: boolean;
+  payload: unknown;
+}> {
+  return rows.map((r) => ({
+    id: r.id,
+    updatedAt: r.updated_at,
+    deleted: r.deleted === 1,
+    payload: r.deleted === 1 || r.payload == null ? null : safeJsonParse(r.payload),
+  }));
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function readSyncItems(input: unknown): SyncItemInput[] {
+  if (!Array.isArray(input)) return [];
+  const out: SyncItemInput[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.id !== 'string' || !r.id) continue;
+    if (typeof r.updatedAt !== 'number' || !Number.isFinite(r.updatedAt)) continue;
+    out.push({
+      id: r.id,
+      updatedAt: r.updatedAt,
+      deleted: r.deleted === true,
+      payload: r.payload,
+    });
+  }
+  return out;
+}
+
+app.get('/api/sync/pull', requireAuth, (req, res) => {
+  const userId = (req.user as { id: number }).id;
+  const ranges = rowsToWire(listRangesForUser(userId));
+  const tournaments = rowsToWire(listTournamentsForUser(userId));
+  const settingsRow = getSettingsForUser(userId);
+  const settings = settingsRow
+    ? { payload: safeJsonParse(settingsRow.payload), updatedAt: settingsRow.updated_at }
+    : null;
+  res.json({ ranges, tournaments, settings });
+});
+
+app.post('/api/sync/push', requireAuth, (req, res) => {
+  const userId = (req.user as { id: number }).id;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const rangesResult = pushRangesForUser(userId, readSyncItems(body.ranges));
+  const tournamentsResult = pushTournamentsForUser(userId, readSyncItems(body.tournaments));
+
+  let settingsResult: 'applied' | 'skipped' | 'noop' = 'noop';
+  const s = body.settings as { payload?: unknown; updatedAt?: number } | undefined;
+  if (s && typeof s === 'object' && typeof s.updatedAt === 'number') {
+    settingsResult = pushSettingsForUser(userId, s.payload, s.updatedAt);
+  }
+
+  res.json({
+    ranges: rangesResult,
+    tournaments: tournamentsResult,
+    settings: settingsResult,
   });
 });
 

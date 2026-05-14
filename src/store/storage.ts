@@ -53,6 +53,18 @@ export interface PersistedState {
   lastOpenedSeatId: string | null;
   /** null = 总体（默认），string = 具体对战座位 id */
   lastOpenedOpponentId: string | null;
+  /**
+   * 已删除范围的墓碑：id → 删除时间戳（ms）。
+   * 只用于服务端同步时保证「在 A 设备删的范围，B 设备拉下来后也会被清掉」。
+   * 不会无限增长：每次同步成功后服务端持有同样的墓碑，本地清不清都行，先一直保留。
+   */
+  rangeTombstones: Record<string, number>;
+  /**
+   * 偏好类字段（defaultDepthLabels + 上次打开的范围/深度/座位/对战）整体的版本时间戳。
+   * 任何这几项变更都要 bump 此值，服务端按它做整体 LWW。
+   * 旧数据没有该字段时回退为 0，第一次有变更后会被覆盖。
+   */
+  settingsUpdatedAt: number;
 }
 
 /**
@@ -290,7 +302,20 @@ function migrateV1(raw: unknown): PersistedState | null {
       typeof r.lastOpenedStack === 'string' ? (r.lastOpenedStack as string) : null,
     lastOpenedSeatId: null,
     lastOpenedOpponentId: null,
+    rangeTombstones: {},
+    settingsUpdatedAt: 0,
   };
+}
+
+function sanitizeTombstones(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k !== 'string' || !k) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 export function loadState(): PersistedState {
@@ -327,6 +352,12 @@ export function loadState(): PersistedState {
             isValidSeatId(parsed.lastOpenedOpponentId)
               ? parsed.lastOpenedOpponentId
               : null,
+          rangeTombstones: sanitizeTombstones(parsed.rangeTombstones),
+          settingsUpdatedAt:
+            typeof parsed.settingsUpdatedAt === 'number' &&
+            Number.isFinite(parsed.settingsUpdatedAt)
+              ? parsed.settingsUpdatedAt
+              : 0,
         };
       }
     }
@@ -356,6 +387,8 @@ function cloneEmpty(): PersistedState {
     lastOpenedDepthLabel: null,
     lastOpenedSeatId: null,
     lastOpenedOpponentId: null,
+    rangeTombstones: {},
+    settingsUpdatedAt: 0,
   };
 }
 

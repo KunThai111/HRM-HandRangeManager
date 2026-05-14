@@ -296,6 +296,46 @@ function getSnapshot(): InternalState {
   return state;
 }
 
+/**
+ * 给 sync 模块用：直接读取最新 persisted state（不走 React hook）。
+ */
+export function _getRangePersisted(): PersistedState {
+  return state.persisted;
+}
+
+/**
+ * 给 sync 模块用：直接订阅 store 任意变更（用于 schedulePush 触发）。
+ */
+export function _subscribeRangeStore(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
+/**
+ * 给 sync 模块用：用从远端合并出的 persisted 替换本地。
+ * - 若当前 draft 的 rangeId 已不在 ranges 里，回退到空 draft；
+ * - 若仍存在，重新从 persisted 中读最新版本刷新 draft（保留当前选中的 depth/seat/opp）。
+ * - persisted 直接写盘（saveState）+ emit，UI 立即更新。
+ */
+export function _replaceRangePersisted(next: PersistedState): void {
+  state = (() => {
+    const draft = state.draft;
+    if (!draft.rangeId) return { persisted: next, draft };
+    const target = next.ranges.find((r) => r.id === draft.rangeId);
+    if (!target) return { persisted: next, draft: { ...EMPTY_DRAFT } };
+    return {
+      persisted: next,
+      draft: draftFromRange(
+        target,
+        draft.currentDepthLabel,
+        draft.currentSeatId,
+        draft.currentOpponentId,
+      ),
+    };
+  })();
+  saveState(state.persisted);
+  emit();
+}
+
 // -------------------- Selector hooks --------------------
 
 export function useDraft(): DraftState {
@@ -394,13 +434,23 @@ function withBucketChange(
 }
 
 function bumpLastOpened(draft: DraftState, persisted: PersistedState): PersistedState {
-  return {
+  const next: PersistedState = {
     ...persisted,
     lastOpenedRangeId: draft.rangeId,
     lastOpenedDepthLabel: draft.currentDepthLabel,
     lastOpenedSeatId: draft.currentSeatId,
     lastOpenedOpponentId: draft.currentOpponentId,
   };
+  // 只有真的发生变化时才推进 settingsUpdatedAt，避免每次 setState 都打破 LWW 顺序
+  if (
+    next.lastOpenedRangeId !== persisted.lastOpenedRangeId ||
+    next.lastOpenedDepthLabel !== persisted.lastOpenedDepthLabel ||
+    next.lastOpenedSeatId !== persisted.lastOpenedSeatId ||
+    next.lastOpenedOpponentId !== persisted.lastOpenedOpponentId
+  ) {
+    next.settingsUpdatedAt = Date.now();
+  }
+  return next;
 }
 
 // -------------------- 编辑模式辅助 --------------------
@@ -880,13 +930,15 @@ export const rangeActions = {
 
   remove(id: string) {
     setState((s) => {
+      if (!s.persisted.ranges.some((r) => r.id === id)) return s;
       const ranges = s.persisted.ranges.filter((r) => r.id !== id);
       const isCurrent = s.draft.rangeId === id;
       const draft: DraftState = isCurrent ? { ...EMPTY_DRAFT } : s.draft;
+      const rangeTombstones = { ...s.persisted.rangeTombstones, [id]: Date.now() };
       return {
         ...s,
         draft,
-        persisted: bumpLastOpened(draft, { ...s.persisted, ranges }),
+        persisted: bumpLastOpened(draft, { ...s.persisted, ranges, rangeTombstones }),
       };
     });
   },
@@ -894,7 +946,11 @@ export const rangeActions = {
   setDefaultDepthLabels(labels: string[]) {
     setState((s) => ({
       ...s,
-      persisted: { ...s.persisted, defaultDepthLabels: [...labels] },
+      persisted: {
+        ...s.persisted,
+        defaultDepthLabels: [...labels],
+        settingsUpdatedAt: Date.now(),
+      },
     }));
   },
 

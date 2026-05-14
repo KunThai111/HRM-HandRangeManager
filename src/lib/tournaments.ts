@@ -70,6 +70,11 @@ export interface Tournament {
   bounty?: number;
   date?: string;
   createdAt: string;
+  /**
+   * 最后修改时间（ms epoch）。用于云端同步时按行级 LWW 比较版本。
+   * 兼容旧数据：缺失时回退到 `Date.parse(createdAt)`，由 store 在加载时回填。
+   */
+  updatedAt: number;
   note?: string;
 }
 

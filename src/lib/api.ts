@@ -57,6 +57,50 @@ export interface CurrentUser {
   picture: string | null;
 }
 
+/**
+ * 与 server/src/index.ts 的 /api/sync/* 路由对齐的线上数据形态。
+ * - `payload` 不被服务端解读，纯透传；deleted=true 时为 null。
+ */
+export interface SyncItemDTO<T = unknown> {
+  id: string;
+  updatedAt: number;
+  deleted: boolean;
+  payload: T | null;
+}
+
+export interface SyncSettingsDTO<T = unknown> {
+  payload: T | null;
+  updatedAt: number;
+}
+
+export interface SyncPullResponse<R = unknown, T = unknown, S = unknown> {
+  ranges: SyncItemDTO<R>[];
+  tournaments: SyncItemDTO<T>[];
+  settings: SyncSettingsDTO<S> | null;
+}
+
+export interface SyncPushBody<R = unknown, T = unknown, S = unknown> {
+  ranges?: Array<{
+    id: string;
+    updatedAt: number;
+    deleted?: boolean;
+    payload?: R | null;
+  }>;
+  tournaments?: Array<{
+    id: string;
+    updatedAt: number;
+    deleted?: boolean;
+    payload?: T | null;
+  }>;
+  settings?: { payload: S; updatedAt: number };
+}
+
+export interface SyncPushResponse {
+  ranges: Record<string, 'applied' | 'skipped'>;
+  tournaments: Record<string, 'applied' | 'skipped'>;
+  settings: 'applied' | 'skipped' | 'noop';
+}
+
 export const api = {
   me: () => request<CurrentUser>('/api/me'),
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
@@ -65,4 +109,11 @@ export const api = {
     const search = next ? `?next=${encodeURIComponent(next)}` : '';
     return `${API_BASE}/auth/google${search}`;
   },
+  syncPull: <R = unknown, T = unknown, S = unknown>() =>
+    request<SyncPullResponse<R, T, S>>('/api/sync/pull'),
+  syncPush: <R = unknown, T = unknown, S = unknown>(body: SyncPushBody<R, T, S>) =>
+    request<SyncPushResponse>('/api/sync/push', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
