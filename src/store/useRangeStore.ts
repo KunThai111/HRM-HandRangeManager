@@ -10,9 +10,11 @@ import {
 import { ALL_HAND_KEYS } from '@/lib/hands';
 import {
   DEFAULT_DEPTH_LABELS,
-  bucketCellsFor,
   type DepthGrid,
-  type SeatBucket,
+  type SeatOverride,
+  getCellsForSeat,
+  getCustomActionsForSeat,
+  seatScope,
 } from '@/lib/depths';
 import { seatsForCount, type SeatId } from '@/lib/seats';
 import {
@@ -32,34 +34,33 @@ import {
  * - 显式 save 时把整个 draft 写回 persisted.ranges 对应 id。
  * - 没有选中范围时 rangeId=null，网格显示空白只读态。
  *
- * 三个维度：
+ * 两个维度：
  * - currentDepthLabel：筹码深度
  * - currentSeatId：英雄座位
- * - currentOpponentId：对战座位（null = 总体，未指定具体对战）
  *
  * 编辑模式（§3.8）：
- * - editing=false 时网格的单格涂色（paintCell）不会改动 cells。
- * - beginEdit() 拍下当前激活 (depth, seat, opp) 对应那张表的 cells 快照；
- *   confirmEdit() 退出编辑模式但保留涂色；
- *   cancelEdit() 把快照写回，并按 wasIndependent 决定是否把已分叉的对战表回滚为「跟随总体」。
+ * - editing=false 时网格的单格涂色（paintCell）/ 添加按钮等都不会改动数据。
+ * - beginEdit() 拍下进入编辑前 (depth, seat) 当前可见的 cells / customActions 快照
+ *   及它处在「shared / primary / 独立 / follower」的哪种状态；
+ * - confirmEdit() 退出编辑模式但保留涂色；
+ * - cancelEdit() 把快照写回，并按需要把「编辑期间分叉出来的 override」回滚为「跟随 shared」、
+ *   或把「编辑期间被设置的 primary」回到 null。
  *
- * COW 分叉（对战座位）：
- * - 当 currentOpponentId != null 且 bucket.vs[opp] 不存在时，第一笔涂色会先把 overall
- *   浅拷贝到 vs[opp]（独立化），再写入；之后 vs[opp] 与 overall 彻底独立。
+ * 座位间「跟随 / 独立」：见 lib/depths.ts 文档。
  */
 export interface EditSnapshot {
   depthLabel: string;
   seatId: string;
-  opponentId: string | null;
-  /** 进入编辑前那张目标表（overall 或 vs[opp]）的内容快照。 */
-  cells: Record<string, Action>;
-  /**
-   * 进入编辑时该对战是否已独立。
-   * - opponentId == null：总体永远视为「独立」，固定 true。
-   * - opponentId != null 且 vs[opp] 当时存在 → true，cancel 写回 vs[opp]。
-   * - opponentId != null 且 vs[opp] 当时不存在 → false，cancel 删除 vs[opp]，回到跟随。
-   */
+  /** 进入编辑时该座位是否已经独立。true → 编辑目标是 override；cancel 写回 override。 */
   wasIndependent: boolean;
+  /** 进入编辑时该座位是否是 depth 的 primary。 */
+  wasPrimary: boolean;
+  /** 进入编辑时 depth.primarySeatId 是否还是 null（首次编辑）。 */
+  primaryWasNull: boolean;
+  /** 进入编辑时该座位「看得见」的 cells 副本（独立 → override.cells；否则 → sharedCells）。 */
+  cellsBefore: Record<string, Action>;
+  /** 同上：customActions。 */
+  customActionsBefore: CustomAction[];
 }
 
 export interface DraftState {
@@ -67,16 +68,13 @@ export interface DraftState {
   name: string;
   seats: number;
   depths: DepthGrid[];
-  /** 当前 range 的自定义动作集合，跟随 range 一同存盘。 */
-  customActions: CustomAction[];
   /**
    * 单格备注：key = hand id（如 `AKs`），value = 用户输入的文字。
-   * 按 range 维度共用，不区分深度/座位/对战。
+   * 按 range 维度共用，不区分深度/座位。
    */
   notes: Record<string, string>;
   currentDepthLabel: string | null;
   currentSeatId: string | null;
-  currentOpponentId: string | null;
   dirty: boolean;
   editing: boolean;
   editSnapshot: EditSnapshot | null;
@@ -92,11 +90,9 @@ const EMPTY_DRAFT: DraftState = {
   name: '',
   seats: DEFAULT_SEATS,
   depths: [],
-  customActions: [],
   notes: {},
   currentDepthLabel: null,
   currentSeatId: null,
-  currentOpponentId: null,
   dirty: false,
   editing: false,
   editSnapshot: null,
@@ -118,23 +114,10 @@ function pickInitialSeat(
   return order[0] as SeatId;
 }
 
-function pickInitialOpponent(
-  seatsCount: number,
-  heroSeatId: string,
-  preferred: string | null | undefined,
-): string | null {
-  if (!preferred) return null;
-  if (preferred === heroSeatId) return null;
-  const order = seatsForCount(seatsCount);
-  if (!(order as readonly string[]).includes(preferred)) return null;
-  return preferred;
-}
-
 function draftFromRange(
   range: RangeDoc,
   preferLabel: string | null,
   preferSeatId: string | null,
-  preferOpponentId: string | null,
 ): DraftState {
   const depths = range.depths.map(cloneDepth);
   const label =
@@ -143,39 +126,43 @@ function draftFromRange(
       : depths[0]?.label ?? null;
   const seatsCount = clampSeats(range.seats);
   const seatId = pickInitialSeat(seatsCount, preferSeatId);
-  const opponentId = pickInitialOpponent(seatsCount, seatId, preferOpponentId);
   return {
     rangeId: range.id,
     name: range.name,
     seats: seatsCount,
     depths,
-    customActions: (range.customActions ?? []).map((c) => ({ ...c })),
     notes: { ...(range.notes ?? {}) },
     currentDepthLabel: label,
     currentSeatId: seatId,
-    currentOpponentId: opponentId,
     dirty: false,
     editing: false,
     editSnapshot: null,
   };
 }
 
-function cloneBucket(b: SeatBucket): SeatBucket {
-  const vs: Record<string, Record<string, Action>> = {};
-  for (const [k, v] of Object.entries(b.vs)) vs[k] = { ...v };
-  return { overall: { ...b.overall }, vs };
+function cloneOverride(o: SeatOverride): SeatOverride {
+  return {
+    cells: { ...o.cells },
+    customActions: o.customActions.map((c) => ({ ...c })),
+  };
 }
 
-function cloneSeatsMap(
-  seatsMap: Record<string, SeatBucket>,
-): Record<string, SeatBucket> {
-  const out: Record<string, SeatBucket> = {};
-  for (const [k, v] of Object.entries(seatsMap)) out[k] = cloneBucket(v);
+function cloneSeatOverrides(
+  src: Record<string, SeatOverride>,
+): Record<string, SeatOverride> {
+  const out: Record<string, SeatOverride> = {};
+  for (const [k, v] of Object.entries(src)) out[k] = cloneOverride(v);
   return out;
 }
 
 function cloneDepth(d: DepthGrid): DepthGrid {
-  return { label: d.label, seats: cloneSeatsMap(d.seats) };
+  return {
+    label: d.label,
+    sharedCells: { ...d.sharedCells },
+    sharedCustomActions: d.sharedCustomActions.map((c) => ({ ...c })),
+    seatOverrides: cloneSeatOverrides(d.seatOverrides),
+    primarySeatId: d.primarySeatId,
+  };
 }
 
 function cellsEqual(a: Record<string, Action>, b: Record<string, Action>): boolean {
@@ -188,23 +175,28 @@ function cellsEqual(a: Record<string, Action>, b: Record<string, Action>): boole
   return true;
 }
 
-function bucketsEqual(a: SeatBucket, b: SeatBucket): boolean {
-  if (!cellsEqual(a.overall, b.overall)) return false;
-  const ka = Object.keys(a.vs);
-  const kb = Object.keys(b.vs);
-  if (ka.length !== kb.length) return false;
-  for (const k of ka) {
-    const av = a.vs[k];
-    const bv = b.vs[k];
-    if (!bv) return false;
-    if (!cellsEqual(av, bv)) return false;
+function customActionsEqual(
+  a: readonly CustomAction[],
+  b: readonly CustomAction[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+    if (a[i].label !== b[i].label) return false;
+    if (a[i].color !== b[i].color) return false;
   }
   return true;
 }
 
-function seatsMapEqual(
-  a: Record<string, SeatBucket>,
-  b: Record<string, SeatBucket>,
+function overrideEqual(a: SeatOverride, b: SeatOverride): boolean {
+  if (!cellsEqual(a.cells, b.cells)) return false;
+  if (!customActionsEqual(a.customActions, b.customActions)) return false;
+  return true;
+}
+
+function overridesEqual(
+  a: Record<string, SeatOverride>,
+  b: Record<string, SeatOverride>,
 ): boolean {
   const ka = Object.keys(a);
   const kb = Object.keys(b);
@@ -213,18 +205,17 @@ function seatsMapEqual(
     const av = a[k];
     const bv = b[k];
     if (!bv) return false;
-    if (!bucketsEqual(av, bv)) return false;
+    if (!overrideEqual(av, bv)) return false;
   }
   return true;
 }
 
-function customActionsEqual(a: CustomAction[], b: CustomAction[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].id !== b[i].id) return false;
-    if (a[i].label !== b[i].label) return false;
-    if (a[i].color !== b[i].color) return false;
-  }
+function depthEqual(a: DepthGrid, b: DepthGrid): boolean {
+  if (a.label !== b.label) return false;
+  if (a.primarySeatId !== b.primarySeatId) return false;
+  if (!cellsEqual(a.sharedCells, b.sharedCells)) return false;
+  if (!customActionsEqual(a.sharedCustomActions, b.sharedCustomActions)) return false;
+  if (!overridesEqual(a.seatOverrides, b.seatOverrides)) return false;
   return true;
 }
 
@@ -247,14 +238,10 @@ function draftMatchesPersisted(draft: DraftState, persisted: PersistedState): bo
   if (!src) return false;
   if (src.name !== draft.name) return false;
   if (src.seats !== draft.seats) return false;
-  if (!customActionsEqual(src.customActions ?? [], draft.customActions)) return false;
   if (!notesEqual(src.notes ?? {}, draft.notes)) return false;
   if (src.depths.length !== draft.depths.length) return false;
   for (let i = 0; i < src.depths.length; i++) {
-    const a = src.depths[i];
-    const b = draft.depths[i];
-    if (a.label !== b.label) return false;
-    if (!seatsMapEqual(a.seats, b.seats)) return false;
+    if (!depthEqual(src.depths[i], draft.depths[i])) return false;
   }
   return true;
 }
@@ -269,7 +256,6 @@ function buildInitialState(): InternalState {
         target,
         persisted.lastOpenedDepthLabel,
         persisted.lastOpenedSeatId,
-        persisted.lastOpenedOpponentId,
       )
     : { ...EMPTY_DRAFT };
   return { persisted, draft };
@@ -314,7 +300,7 @@ export function _subscribeRangeStore(listener: () => void): () => void {
 /**
  * 给 sync 模块用：用从远端合并出的 persisted 替换本地。
  * - 若当前 draft 的 rangeId 已不在 ranges 里，回退到空 draft；
- * - 若仍存在，重新从 persisted 中读最新版本刷新 draft（保留当前选中的 depth/seat/opp）。
+ * - 若仍存在，重新从 persisted 中读最新版本刷新 draft（保留当前选中的 depth/seat）。
  * - persisted 直接写盘（saveState）+ emit，UI 立即更新。
  */
 export function _replaceRangePersisted(next: PersistedState): void {
@@ -329,7 +315,6 @@ export function _replaceRangePersisted(next: PersistedState): void {
         target,
         draft.currentDepthLabel,
         draft.currentSeatId,
-        draft.currentOpponentId,
       ),
     };
   })();
@@ -364,11 +349,38 @@ export function useDefaultDepthLabels(): string[] {
   );
 }
 
+export const EMPTY_CELLS: Record<string, Action> = Object.freeze({});
+const EMPTY_CUSTOM_ACTIONS: readonly CustomAction[] = Object.freeze([]);
+
+/** 取当前激活 (depth) 的 DepthGrid。 */
+function getCurrentDepth(draft: DraftState): DepthGrid | undefined {
+  if (!draft.currentDepthLabel) return undefined;
+  return draft.depths.find((d) => d.label === draft.currentDepthLabel);
+}
+
+/** 取当前 (depth, seat) 应渲染的 cells。 */
+export function getCurrentCells(draft: DraftState): Record<string, Action> {
+  const depth = getCurrentDepth(draft);
+  if (!depth || !draft.currentSeatId) return EMPTY_CELLS;
+  return getCellsForSeat(depth, draft.currentSeatId);
+}
+
+/** 取当前 (depth, seat) 应渲染的 customActions。 */
+export function getCurrentCustomActions(draft: DraftState): CustomAction[] {
+  const depth = getCurrentDepth(draft);
+  if (!depth || !draft.currentSeatId) return EMPTY_CUSTOM_ACTIONS as CustomAction[];
+  return getCustomActionsForSeat(depth, draft.currentSeatId);
+}
+
+/** 兼容旧引用名。 */
+export const getCurrentSeatCells = getCurrentCells;
+export const getCurrentDepthCells = getCurrentCells;
+
 export function useCustomActions(): CustomAction[] {
   return useSyncExternalStore(
     subscribe,
-    () => getSnapshot().draft.customActions,
-    () => getSnapshot().draft.customActions,
+    () => getCurrentCustomActions(getSnapshot().draft),
+    () => getCurrentCustomActions(getSnapshot().draft),
   );
 }
 
@@ -380,95 +392,123 @@ export function useNotes(): Record<string, string> {
   );
 }
 
-export const EMPTY_CELLS: Record<string, Action> = Object.freeze({});
-
-/** 取当前 (depth, hero) 对应的 SeatBucket（不存在则 undefined）。 */
-export function getCurrentBucket(draft: DraftState): SeatBucket | undefined {
-  if (!draft.currentDepthLabel || !draft.currentSeatId) return undefined;
-  const depth = draft.depths.find((x) => x.label === draft.currentDepthLabel);
-  if (!depth) return undefined;
-  return depth.seats[draft.currentSeatId];
-}
-
-/** 取当前 (depth, hero, opp) 应渲染的 cells（按 opp 派发；未独立则回退到 overall）。 */
-export function getCurrentCells(draft: DraftState): Record<string, Action> {
-  const bucket = getCurrentBucket(draft);
-  if (!bucket) return EMPTY_CELLS;
-  return bucketCellsFor(bucket, draft.currentOpponentId);
-}
-
-/** 兼容旧引用名。 */
-export const getCurrentSeatCells = getCurrentCells;
-export const getCurrentDepthCells = getCurrentCells;
-
 // -------------------- Internal helpers --------------------
 
 /**
- * 在当前激活 (depth, hero) 的 SeatBucket 上做变更并把结果写回 draft。
- * mutator 接收当前 bucket（若不存在则给 { overall:{}, vs:{} }），返回新的 bucket。
- * 若新 bucket 与旧 bucket 引用相同则视作未变更，draft 不变。
- * 若新 bucket 完全空（overall 空且 vs 无任何 key）则把 seats[heroSeat] 删除。
+ * 在当前激活 (depth, seat) 上执行作用域感知的修改：
+ * - 若该座位已独立 → mutator 接收并返回 override（cells + customActions）。
+ * - 若该座位是 primary（或还没人是 primary）→ mutator 接收并返回 shared（cells + customActions）。
+ *   特殊：若 primary 是 null，本次写入会把 primary 设为当前座位（仅当 mutator 返回的内容与原 shared 不同）。
+ * - 若该座位是 follower（primary 是别人）→ 调用 mutator 时先 COW shared 到 override，
+ *   mutator 返回新的 override；写回 seatOverrides[seatId]。
+ *
+ * mutator 接收当前 scope 的 cells + customActions（可能是 shared 也可能是 override），
+ * 返回新的 cells + customActions。
+ * - 若新值与旧值「全等于」（cellsEqual 且 customActionsEqual），mutator 自行 short-circuit 即可，
+ *   外层会判断 referential equality 决定是否触发 dirty。
  */
-function withBucketChange(
-  draft: DraftState,
-  mutator: (bucket: SeatBucket) => SeatBucket,
-): DraftState {
-  if (!draft.currentDepthLabel || !draft.currentSeatId) return draft;
+function applyToSeatScope(
+  s: InternalState,
+  mutator: (input: {
+    cells: Record<string, Action>;
+    customActions: CustomAction[];
+    /** 'shared' = 当前正在写 sharedCells；'override' = 当前正在写 override.cells。 */
+    scope: 'shared' | 'override';
+  }) => { cells: Record<string, Action>; customActions: CustomAction[] },
+): InternalState {
+  const draft = s.draft;
+  if (!draft.currentDepthLabel || !draft.currentSeatId) return s;
   const dIdx = draft.depths.findIndex((d) => d.label === draft.currentDepthLabel);
-  if (dIdx < 0) return draft;
+  if (dIdx < 0) return s;
   const depth = draft.depths[dIdx];
   const seatId = draft.currentSeatId;
-  const cur = depth.seats[seatId] ?? { overall: {}, vs: {} };
-  const next = mutator(cur);
-  if (next === cur) return draft;
-  const isEmpty =
-    Object.keys(next.overall).length === 0 && Object.keys(next.vs).length === 0;
-  const nextSeats = { ...depth.seats };
-  if (isEmpty) {
-    delete nextSeats[seatId];
+  const scope = seatScope(depth, seatId);
+
+  let nextDepth: DepthGrid;
+  if (scope === 'override') {
+    const cur = depth.seatOverrides[seatId];
+    const out = mutator({
+      cells: cur.cells,
+      customActions: cur.customActions,
+      scope: 'override',
+    });
+    if (
+      cellsEqual(out.cells, cur.cells) &&
+      customActionsEqual(out.customActions, cur.customActions)
+    ) {
+      return s;
+    }
+    const nextOverride: SeatOverride = {
+      cells: out.cells,
+      customActions: out.customActions,
+    };
+    nextDepth = {
+      ...depth,
+      seatOverrides: { ...depth.seatOverrides, [seatId]: nextOverride },
+    };
+  } else if (scope === 'shared') {
+    const out = mutator({
+      cells: depth.sharedCells,
+      customActions: depth.sharedCustomActions,
+      scope: 'shared',
+    });
+    if (
+      cellsEqual(out.cells, depth.sharedCells) &&
+      customActionsEqual(out.customActions, depth.sharedCustomActions)
+    ) {
+      return s;
+    }
+    nextDepth = {
+      ...depth,
+      sharedCells: out.cells,
+      sharedCustomActions: out.customActions,
+      // 首次写入：把 primary 设为当前座位
+      primarySeatId: depth.primarySeatId ?? seatId,
+    };
   } else {
-    nextSeats[seatId] = next;
+    // follower：COW shared → override，再让 mutator 写 override
+    const baseCells = { ...depth.sharedCells };
+    const baseActions = depth.sharedCustomActions.map((c) => ({ ...c }));
+    const out = mutator({
+      cells: baseCells,
+      customActions: baseActions,
+      scope: 'override',
+    });
+    // follower 必然要写入（COW 后没有变化的情形：mutator 把 shared 原样返回）
+    if (cellsEqual(out.cells, depth.sharedCells) && customActionsEqual(out.customActions, depth.sharedCustomActions)) {
+      return s;
+    }
+    const nextOverride: SeatOverride = {
+      cells: out.cells,
+      customActions: out.customActions,
+    };
+    nextDepth = {
+      ...depth,
+      seatOverrides: { ...depth.seatOverrides, [seatId]: nextOverride },
+    };
   }
+
   const depths = draft.depths.slice();
-  depths[dIdx] = { label: depth.label, seats: nextSeats };
-  return { ...draft, depths, dirty: true };
+  depths[dIdx] = nextDepth;
+  return { ...s, draft: { ...draft, depths, dirty: true } };
 }
 
-/**
- * 通用「写一格」的内部实现：根据 currentOpponentId 决定写入总体还是对战 vs 表，
- * 并对「写入后值未变」做 short-circuit（避免无意义分叉对战独立表）。
- * - isFold=true → 从对应表里删除该 hand（fold 不入库）
- * - 否则把 `value` 写到该 hand
- */
-function applyCellWrite(
+/** 通用：写一格 cells（fold = 删除条目）。基于 applyToSeatScope。 */
+function writeCell(
   s: InternalState,
   hand: string,
   isFold: boolean,
   value: Action,
 ): InternalState {
-  const opp = s.draft.currentOpponentId;
-  const draft = withBucketChange(s.draft, (bucket) => {
-    if (opp == null) {
-      const prev = bucket.overall[hand] ?? 'fold';
-      const nextValue = isFold ? 'fold' : value;
-      if (prev === nextValue) return bucket;
-      const overall = { ...bucket.overall };
-      if (isFold) delete overall[hand];
-      else overall[hand] = value;
-      return { overall, vs: bucket.vs };
-    }
-    const existing = bucket.vs[opp];
-    const base = existing ?? bucket.overall;
-    const prev = base[hand] ?? 'fold';
+  return applyToSeatScope(s, ({ cells, customActions }) => {
+    const prev = cells[hand] ?? 'fold';
     const nextValue = isFold ? 'fold' : value;
-    if (prev === nextValue) return bucket;
-    const next = { ...base };
-    if (isFold) delete next[hand];
-    else next[hand] = value;
-    return { overall: bucket.overall, vs: { ...bucket.vs, [opp]: next } };
+    if (prev === nextValue) return { cells, customActions };
+    const nextCells = { ...cells };
+    if (isFold) delete nextCells[hand];
+    else nextCells[hand] = value;
+    return { cells: nextCells, customActions };
   });
-  if (draft === s.draft) return s;
-  return { ...s, draft };
 }
 
 function bumpLastOpened(draft: DraftState, persisted: PersistedState): PersistedState {
@@ -477,14 +517,11 @@ function bumpLastOpened(draft: DraftState, persisted: PersistedState): Persisted
     lastOpenedRangeId: draft.rangeId,
     lastOpenedDepthLabel: draft.currentDepthLabel,
     lastOpenedSeatId: draft.currentSeatId,
-    lastOpenedOpponentId: draft.currentOpponentId,
   };
-  // 只有真的发生变化时才推进 settingsUpdatedAt，避免每次 setState 都打破 LWW 顺序
   if (
     next.lastOpenedRangeId !== persisted.lastOpenedRangeId ||
     next.lastOpenedDepthLabel !== persisted.lastOpenedDepthLabel ||
-    next.lastOpenedSeatId !== persisted.lastOpenedSeatId ||
-    next.lastOpenedOpponentId !== persisted.lastOpenedOpponentId
+    next.lastOpenedSeatId !== persisted.lastOpenedSeatId
   ) {
     next.settingsUpdatedAt = Date.now();
   }
@@ -494,7 +531,7 @@ function bumpLastOpened(draft: DraftState, persisted: PersistedState): Persisted
 // -------------------- 编辑模式辅助 --------------------
 
 /**
- * 把编辑模式的 snapshot 应用回当前 (depth, seat, opp) 的 cells，并清除 editing/editSnapshot。
+ * 把编辑模式的 snapshot 应用回当前 (depth, seat) 的 cells / customActions，并清除 editing/editSnapshot。
  * 如果回滚后 draft 与 persisted 完全一致，则同时清除 dirty 标记。
  * 没有进入编辑模式 / 没有 snapshot / 没激活范围时直接返回原 draft。
  */
@@ -506,34 +543,39 @@ function rollbackEditing(draft: DraftState, persisted: PersistedState): DraftSta
     const dIdx = depths.findIndex((d) => d.label === snap.depthLabel);
     if (dIdx >= 0) {
       const depth = depths[dIdx];
-      const bucket = depth.seats[snap.seatId] ?? { overall: {}, vs: {} };
-      let nextBucket: SeatBucket;
-      if (snap.opponentId == null) {
-        // 总体回滚
-        nextBucket = { overall: { ...snap.cells }, vs: { ...bucket.vs } };
-      } else if (snap.wasIndependent) {
-        // 之前已独立 → 把快照写回 vs[opp]
-        nextBucket = {
-          overall: bucket.overall,
-          vs: { ...bucket.vs, [snap.opponentId]: { ...snap.cells } },
+      let nextDepth: DepthGrid;
+      if (snap.wasIndependent) {
+        // 写回该座位的 override
+        nextDepth = {
+          ...depth,
+          seatOverrides: {
+            ...depth.seatOverrides,
+            [snap.seatId]: {
+              cells: { ...snap.cellsBefore },
+              customActions: snap.customActionsBefore.map((c) => ({ ...c })),
+            },
+          },
+        };
+      } else if (snap.wasPrimary || snap.primaryWasNull) {
+        // 写回 shared；若编辑前 primary 是 null，把它恢复为 null
+        nextDepth = {
+          ...depth,
+          sharedCells: { ...snap.cellsBefore },
+          sharedCustomActions: snap.customActionsBefore.map((c) => ({ ...c })),
+          primarySeatId: snap.primaryWasNull ? null : depth.primarySeatId,
         };
       } else {
-        // 之前未独立 → 删除 vs[opp]，回到「跟随总体」状态
-        const vs = { ...bucket.vs };
-        delete vs[snap.opponentId];
-        nextBucket = { overall: bucket.overall, vs };
-      }
-      const isEmpty =
-        Object.keys(nextBucket.overall).length === 0 &&
-        Object.keys(nextBucket.vs).length === 0;
-      const nextSeats = { ...depth.seats };
-      if (isEmpty) {
-        delete nextSeats[snap.seatId];
-      } else {
-        nextSeats[snap.seatId] = nextBucket;
+        // follower：编辑期间可能 COW 出了 override，cancel 时删掉它
+        if (Object.prototype.hasOwnProperty.call(depth.seatOverrides, snap.seatId)) {
+          const seatOverrides = { ...depth.seatOverrides };
+          delete seatOverrides[snap.seatId];
+          nextDepth = { ...depth, seatOverrides };
+        } else {
+          nextDepth = depth;
+        }
       }
       const next = depths.slice();
-      next[dIdx] = { label: depth.label, seats: nextSeats };
+      next[dIdx] = nextDepth;
       depths = next;
     }
   }
@@ -564,28 +606,25 @@ export const rangeActions = {
       if (d.editing) return s;
       const depth = d.depths.find((x) => x.label === d.currentDepthLabel);
       if (!depth) return s;
-      const bucket = depth.seats[d.currentSeatId] ?? { overall: {}, vs: {} };
-      const opp = d.currentOpponentId;
-      let cells: Record<string, Action>;
-      let wasIndependent: boolean;
-      if (opp == null) {
-        cells = { ...bucket.overall };
-        wasIndependent = true;
-      } else if (Object.prototype.hasOwnProperty.call(bucket.vs, opp)) {
-        cells = { ...bucket.vs[opp] };
-        wasIndependent = true;
-      } else {
-        // 当前对战未独立：快照存的是当时显示中的 overall，wasIndependent=false
-        // 用于 cancel 时让 vs[opp] 重新消失（恢复跟随）。
-        cells = { ...bucket.overall };
-        wasIndependent = false;
-      }
+      const seatId = d.currentSeatId;
+      const scope = seatScope(depth, seatId);
+      const wasIndependent = scope === 'override';
+      const wasPrimary = !wasIndependent && depth.primarySeatId === seatId;
+      const primaryWasNull = !wasIndependent && depth.primarySeatId == null;
+      const cellsBefore = wasIndependent
+        ? { ...depth.seatOverrides[seatId].cells }
+        : { ...depth.sharedCells };
+      const customActionsBefore = wasIndependent
+        ? depth.seatOverrides[seatId].customActions.map((c) => ({ ...c }))
+        : depth.sharedCustomActions.map((c) => ({ ...c }));
       const editSnapshot: EditSnapshot = {
         depthLabel: depth.label,
-        seatId: d.currentSeatId,
-        opponentId: opp,
-        cells,
+        seatId,
         wasIndependent,
+        wasPrimary,
+        primaryWasNull,
+        cellsBefore,
+        customActionsBefore,
       };
       return { ...s, draft: { ...d, editing: true, editSnapshot } };
     });
@@ -618,7 +657,7 @@ export const rangeActions = {
       if (!s.draft.editing) return s;
       const nextValue =
         action === 'fold' ? 'fold' : makeCellValue(action, clampWeight(weight));
-      return applyCellWrite(s, hand, action === 'fold', nextValue);
+      return writeCell(s, hand, action === 'fold', nextValue);
     });
   },
 
@@ -632,35 +671,20 @@ export const rangeActions = {
       if (!s.draft.editing) return s;
       const value = makeCellValueFromSegments(segments);
       const isFold = value === 'fold';
-      return applyCellWrite(s, hand, isFold, isFold ? 'fold' : value);
+      return writeCell(s, hand, isFold, isFold ? 'fold' : value);
     });
   },
 
   fillAll(action: Action) {
     setState((s) => {
-      const opp = s.draft.currentOpponentId;
-      const draft = withBucketChange(s.draft, (bucket) => {
+      return applyToSeatScope(s, ({ cells, customActions }) => {
         const target: Record<string, Action> = {};
         if (action !== 'fold') {
           for (const k of ALL_HAND_KEYS) target[k] = action;
         }
-        if (opp == null) {
-          // 总体：直接覆盖 overall
-          if (cellsEqual(bucket.overall, target)) return bucket;
-          return { overall: target, vs: bucket.vs };
-        }
-        // 对战：写到 vs[opp]，必要时分叉
-        const existing = bucket.vs[opp];
-        if (existing && cellsEqual(existing, target)) return bucket;
-        // 未独立 + 总体本身就等于 target + 用户要清空(fold) → 跟随更省事
-        if (!existing && cellsEqual(bucket.overall, target)) return bucket;
-        return {
-          overall: bucket.overall,
-          vs: { ...bucket.vs, [opp]: target },
-        };
+        if (cellsEqual(cells, target)) return { cells, customActions };
+        return { cells: target, customActions };
       });
-      if (draft === s.draft) return s;
-      return { ...s, draft };
     });
   },
 
@@ -668,27 +692,10 @@ export const rangeActions = {
     this.fillAll('fold');
   },
 
-  /**
-   * 让某个对战座位「恢复跟随总体」状态（删除 vs[opp]）。
-   * 仅在当前激活 (depth, hero) 上操作，dirty=true。
-   */
-  resetOpponent(opponentId: string) {
-    setState((s) => {
-      const draft = withBucketChange(s.draft, (bucket) => {
-        if (!Object.prototype.hasOwnProperty.call(bucket.vs, opponentId)) return bucket;
-        const vs = { ...bucket.vs };
-        delete vs[opponentId];
-        return { overall: bucket.overall, vs };
-      });
-      if (draft === s.draft) return s;
-      return { ...s, draft };
-    });
-  },
-
   // ====== 单格备注 ======
   /**
    * 设置某个 hand 的备注文字。空串 / 纯空白会被视作「删除该备注」。
-   * 备注按 range 维度共用，所有 (深度, 座位, 对战) 都看到同一份。
+   * 备注按 range 维度共用，所有 (深度, 座位) 都看到同一份。
    * 不受编辑模式限制：备注是元数据，不属于网格涂色，可随时编辑（仍计 dirty）。
    */
   setNote(hand: string, text: string) {
@@ -725,27 +732,19 @@ export const rangeActions = {
         s.draft.currentSeatId && (order as readonly string[]).includes(s.draft.currentSeatId)
           ? s.draft.currentSeatId
           : order[0];
-      // opponent 若不在新序列里 / 等于新 hero → 回到「总体」
-      const validOpp =
-        s.draft.currentOpponentId &&
-        (order as readonly string[]).includes(s.draft.currentOpponentId) &&
-        s.draft.currentOpponentId !== validSeat
-          ? s.draft.currentOpponentId
-          : null;
       return {
         ...s,
         draft: {
           ...s.draft,
           seats: next,
           currentSeatId: validSeat,
-          currentOpponentId: validOpp,
           dirty: true,
         },
       };
     });
   },
 
-  // ====== Depth / Seat / Opponent 切换 ======
+  // ====== Depth / Seat 切换 ======
   switchDepth(label: string) {
     setState((s) => {
       if (s.draft.currentDepthLabel === label) return s;
@@ -762,32 +761,7 @@ export const rangeActions = {
       const order = seatsForCount(s.draft.seats);
       if (!(order as readonly string[]).includes(seatId)) return s;
       const base = rollbackEditing(s.draft, s.persisted);
-      // 切换英雄座位时，对战自动回到「总体」（语义跟随英雄）
-      const draft: DraftState = {
-        ...base,
-        currentSeatId: seatId,
-        currentOpponentId: null,
-      };
-      return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
-    });
-  },
-
-  /**
-   * 切换对战座位。null = 回到「总体」。
-   * - 不能选英雄自己。
-   * - 必须落在当前桌人数对应的座位序列里。
-   * - 编辑模式下先按「取消」回滚再切换。
-   */
-  switchOpponent(opponentId: string | null) {
-    setState((s) => {
-      if (s.draft.currentOpponentId === opponentId) return s;
-      if (opponentId !== null) {
-        if (opponentId === s.draft.currentSeatId) return s;
-        const order = seatsForCount(s.draft.seats);
-        if (!(order as readonly string[]).includes(opponentId)) return s;
-      }
-      const base = rollbackEditing(s.draft, s.persisted);
-      const draft: DraftState = { ...base, currentOpponentId: opponentId };
+      const draft: DraftState = { ...base, currentSeatId: seatId };
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
   },
@@ -829,7 +803,7 @@ export const rangeActions = {
     setState((s) => {
       const range = makeRange(name, s.persisted.defaultDepthLabels, seats);
       outId = range.id;
-      const draft = draftFromRange(range, range.depths[0]?.label ?? null, null, null);
+      const draft = draftFromRange(range, range.depths[0]?.label ?? null, null);
       return {
         ...s,
         draft,
@@ -850,7 +824,6 @@ export const rangeActions = {
         found,
         s.persisted.lastOpenedDepthLabel,
         s.persisted.lastOpenedSeatId,
-        s.persisted.lastOpenedOpponentId,
       );
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
@@ -872,7 +845,6 @@ export const rangeActions = {
               name,
               seats: base.seats,
               depths: base.depths.map(cloneDepth),
-              customActions: base.customActions.map((c) => ({ ...c })),
               notes: { ...base.notes },
               updatedAt: now,
             }
@@ -901,7 +873,6 @@ export const rangeActions = {
         name: finalName,
         seats: base.seats,
         depths: base.depths.map(cloneDepth),
-        customActions: base.customActions.map((c) => ({ ...c })),
         notes: { ...base.notes },
         createdAt: now,
         updatedAt: now,
@@ -911,7 +882,6 @@ export const rangeActions = {
         range,
         base.currentDepthLabel,
         base.currentSeatId,
-        base.currentOpponentId,
       );
       return {
         ...s,
@@ -947,7 +917,6 @@ export const rangeActions = {
         name: `${src.name} (copy)`,
         seats: clampSeats(src.seats),
         depths: src.depths.map(cloneDepth),
-        customActions: (src.customActions ?? []).map((c) => ({ ...c })),
         notes: { ...(src.notes ?? {}) },
         createdAt: now,
         updatedAt: now,
@@ -984,11 +953,13 @@ export const rangeActions = {
     }));
   },
 
-  // ====== 自定义动作按钮（仅在编辑模式下调用） ======
+  // ====== 自定义动作按钮（按 (depth, seat) 拆分） ======
 
   /**
-   * 新增一个自定义动作。返回新 id；若 label/color 非法则返回 null。
-   * 仅修改 draft.customActions，dirty=true；不影响 cells。
+   * 在当前 (depth, seat) 作用域里新增一个自定义动作。返回新 id；若 label/color 非法则返回 null。
+   * - 当前是 follower 座位 → 第一次新增会触发 COW shared → override，新按钮只属于本座位。
+   * - 当前是独立座位 → 新按钮只属于本座位的 override。
+   * - 当前是 primary（或还没人是 primary）→ 新按钮加入 sharedCustomActions，所有未独立座位都看到。
    */
   addCustomAction(label: string, color: string): string | null {
     const trimmed = label.trim();
@@ -998,105 +969,84 @@ export const rangeActions = {
     setState((s) => {
       if (!s.draft.rangeId) return s;
       const id = newCustomActionId();
-      outId = id;
       const next: CustomAction = { id, label: trimmed, color: color.trim() };
-      const draft: DraftState = {
-        ...s.draft,
-        customActions: [...s.draft.customActions, next],
-        dirty: true,
-      };
-      return { ...s, draft };
+      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+        return { cells, customActions: [...customActions, next] };
+      });
+      if (after !== s) outId = id;
+      return after;
     });
     return outId;
   },
 
-  /** 更新一个已有自定义动作的 label / color。 */
+  /** 在当前作用域里更新一个已有自定义动作的 label / color。 */
   updateCustomAction(id: string, patch: { label?: string; color?: string }): boolean {
     let ok = false;
     setState((s) => {
-      const idx = s.draft.customActions.findIndex((c) => c.id === id);
-      if (idx < 0) return s;
-      const cur = s.draft.customActions[idx];
-      const nextLabel = patch.label !== undefined ? patch.label.trim() : cur.label;
-      const nextColor = patch.color !== undefined ? patch.color.trim() : cur.color;
-      if (!nextLabel) return s;
-      if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(nextColor)) return s;
-      if (nextLabel === cur.label && nextColor === cur.color) {
+      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+        const idx = customActions.findIndex((c) => c.id === id);
+        if (idx < 0) return { cells, customActions };
+        const cur = customActions[idx];
+        const nextLabel = patch.label !== undefined ? patch.label.trim() : cur.label;
+        const nextColor = patch.color !== undefined ? patch.color.trim() : cur.color;
+        if (!nextLabel) return { cells, customActions };
+        if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(nextColor)) return { cells, customActions };
+        if (nextLabel === cur.label && nextColor === cur.color) {
+          ok = true;
+          return { cells, customActions };
+        }
+        const nextActions = customActions.slice();
+        nextActions[idx] = { id: cur.id, label: nextLabel, color: nextColor };
         ok = true;
-        return s;
-      }
-      const customActions = s.draft.customActions.slice();
-      customActions[idx] = { id: cur.id, label: nextLabel, color: nextColor };
-      ok = true;
-      return { ...s, draft: { ...s.draft, customActions, dirty: true } };
+        return { cells, customActions: nextActions };
+      });
+      return after;
     });
     return ok;
   },
 
   /**
-   * 删除一个自定义动作；同时把 draft 内所有 cells 中引用该 id 的格子置为 fold。
-   * 内置动作 id 不会进入此分支。
+   * 在当前作用域里删除一个自定义动作；同时把作用域内 cells 中引用该 id 的格子清扫掉。
+   * - 不跨座位清扫；其它独立座位若也用了同名 id，那是它们自己的副本，不动。
    */
   removeCustomAction(id: string) {
     setState((s) => {
-      if (!s.draft.customActions.some((c) => c.id === id)) return s;
-      const customActions = s.draft.customActions.filter((c) => c.id !== id);
       const cleanCells = (cells: Record<string, Action>): Record<string, Action> => {
         let changed = false;
         const out: Record<string, Action> = {};
         for (const [k, v] of Object.entries(cells)) {
-          // 多段兼容：从混合中剔除被删 id；剔除后若变 fold 则丢弃整格
           const segs = cellSegments(v);
-          if (!segs.some((s) => s.id === id)) {
+          if (!segs.some((seg) => seg.id === id)) {
             out[k] = v;
             continue;
           }
           changed = true;
-          const kept = segs.filter((s) => s.id !== id);
+          const kept = segs.filter((seg) => seg.id !== id);
           if (kept.length === 0) continue;
           const nextValue = makeCellValueFromSegments(kept);
           if (nextValue !== 'fold') out[k] = nextValue;
         }
         return changed ? out : cells;
       };
-      const depths = s.draft.depths.map((d) => {
-        const seats: typeof d.seats = {};
-        let depthChanged = false;
-        for (const [seatId, bucket] of Object.entries(d.seats)) {
-          const overall = cleanCells(bucket.overall);
-          const vs: typeof bucket.vs = {};
-          let vsChanged = false;
-          for (const [oppId, cells] of Object.entries(bucket.vs)) {
-            const next = cleanCells(cells);
-            if (next !== cells) vsChanged = true;
-            if (Object.keys(next).length > 0) vs[oppId] = next;
-            else vsChanged = true;
-          }
-          const bucketChanged = overall !== bucket.overall || vsChanged;
-          if (bucketChanged) depthChanged = true;
-          const isEmpty =
-            Object.keys(overall).length === 0 && Object.keys(vs).length === 0;
-          if (!isEmpty) seats[seatId] = { overall, vs };
+      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+        if (!customActions.some((c) => c.id === id)) {
+          return { cells, customActions };
         }
-        if (!depthChanged) return d;
-        return { label: d.label, seats };
+        const nextActions = customActions.filter((c) => c.id !== id);
+        const nextCells = cleanCells(cells);
+        return { cells: nextCells, customActions: nextActions };
       });
-      // 若当前快照里也引用了这个 id，要同步清掉，否则 cancel 时会复活
-      let editSnapshot = s.draft.editSnapshot;
-      if (editSnapshot) {
-        const cleaned = cleanCells(editSnapshot.cells);
-        if (cleaned !== editSnapshot.cells) {
-          editSnapshot = { ...editSnapshot, cells: cleaned };
-        }
-      }
+      if (after === s) return s;
+      // 同步清掉 editSnapshot.cellsBefore 中对该 id 的引用，避免 cancel 时复活
+      const snap = after.draft.editSnapshot;
+      if (!snap) return after;
+      const cleaned = cleanCells(snap.cellsBefore);
+      if (cleaned === snap.cellsBefore) return after;
       return {
-        ...s,
+        ...after,
         draft: {
-          ...s.draft,
-          customActions,
-          depths,
-          editSnapshot,
-          dirty: true,
+          ...after.draft,
+          editSnapshot: { ...snap, cellsBefore: cleaned },
         },
       };
     });

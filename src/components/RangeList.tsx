@@ -6,14 +6,16 @@ import {
 } from '@/store/useRangeStore';
 import { clampSeats, type RangeDoc } from '@/store/storage';
 import styles from '@/styles/sidebar.module.css';
+import { ConfirmDialog } from './ConfirmDialog';
 import { NewRangeDialog } from './NewRangeDialog';
 
 interface ItemMenuProps {
   range: RangeDoc;
   onClose: () => void;
+  onRequestDelete: () => void;
 }
 
-function ItemMenu({ range, onClose }: ItemMenuProps) {
+function ItemMenu({ range, onClose, onRequestDelete }: ItemMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -43,9 +45,7 @@ function ItemMenu({ range, onClose }: ItemMenuProps) {
   };
   const onDel = () => {
     onClose();
-    const ok = window.confirm(`确认删除「${range.name}」？该方案下所有深度子网格都会一并删除。`);
-    if (!ok) return;
-    rangeActions.remove(range.id);
+    onRequestDelete();
   };
 
   return (
@@ -70,6 +70,7 @@ export function RangeList() {
   const ranges = useRangesSorted();
   const [menuId, setMenuId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deletingRange, setDeletingRange] = useState<RangeDoc | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === '1';
@@ -172,7 +173,13 @@ export function RangeList() {
                   <div className={styles.itemMeta}>
                     <span>{clampSeats(r.seats)} 人桌</span>
                   </div>
-                  {menuId === r.id && <ItemMenu range={r} onClose={() => setMenuId(null)} />}
+                  {menuId === r.id && (
+                    <ItemMenu
+                      range={r}
+                      onClose={() => setMenuId(null)}
+                      onRequestDelete={() => setDeletingRange(r)}
+                    />
+                  )}
                 </li>
               );
             })}
@@ -190,6 +197,26 @@ export function RangeList() {
           onConfirm={(name, seats) => {
             setCreating(false);
             rangeActions.newRange(name, seats);
+          }}
+        />
+      )}
+      {deletingRange && (
+        <ConfirmDialog
+          title="删除方案"
+          danger
+          confirmText="删除"
+          message={
+            <>
+              确认删除 <strong>「{deletingRange.name}」</strong>？该方案下所有深度子网格都会一并删除。
+              <br />
+              此操作不可撤销。
+            </>
+          }
+          onCancel={() => setDeletingRange(null)}
+          onConfirm={() => {
+            const id = deletingRange.id;
+            setDeletingRange(null);
+            rangeActions.remove(id);
           }}
         />
       )}

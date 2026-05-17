@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  countDepthMarks,
+  emptyDepth,
   findDuplicateLabel,
   isLabelUnique,
   type DepthGrid,
-  type SeatBucket,
 } from '@/lib/depths';
 import { rangeActions, useDraft } from '@/store/useRangeStore';
 import styles from '@/styles/dialog.module.css';
@@ -17,8 +18,8 @@ type Working = Array<{
   uid: string;
   /** 缓存中的当前 label */
   label: string;
-  /** 该项各英雄座位对应的 SeatBucket（含 overall 与 vs[opp]） */
-  seats: Record<string, SeatBucket>;
+  /** 该深度的完整数据快照（保留 sharedCells / seatOverrides / primarySeatId / sharedCustomActions） */
+  depth: DepthGrid;
   /** 是否为新增（新增项无任何座位涂色） */
   isNew: boolean;
 }>;
@@ -32,21 +33,9 @@ function workingFromDepths(depths: DepthGrid[]): Working {
   return depths.map((d) => ({
     uid: uid(),
     label: d.label,
-    seats: { ...d.seats },
+    depth: d,
     isNew: false,
   }));
-}
-
-/** 数一个深度下所有 (英雄座位 × overall + 各 vs) 的非 fold 格子数总和。 */
-function totalMarks(seats: Record<string, SeatBucket>): number {
-  let n = 0;
-  for (const bucket of Object.values(seats)) {
-    n += Object.keys(bucket.overall).length;
-    for (const cells of Object.values(bucket.vs)) {
-      n += Object.keys(cells).length;
-    }
-  }
-  return n;
 }
 
 export function DepthEditorDialog({ onClose }: Props) {
@@ -89,7 +78,10 @@ export function DepthEditorDialog({ onClose }: Props) {
       setErrMsg(`标签 "${label}" 已存在`);
       return;
     }
-    setItems((cur) => [...cur, { uid: uid(), label, seats: {}, isNew: true }]);
+    setItems((cur) => [
+      ...cur,
+      { uid: uid(), label, depth: emptyDepth(label), isNew: true },
+    ]);
     setNewLabel('');
     setErrMsg(null);
   };
@@ -138,8 +130,8 @@ export function DepthEditorDialog({ onClose }: Props) {
       return;
     }
     const newDepths: DepthGrid[] = items.map((it, idx) => ({
+      ...it.depth,
       label: labels[idx],
-      seats: it.seats,
     }));
     rangeActions.applyDepthEdits(newDepths, saveAsDefault);
     onClose();
@@ -182,7 +174,7 @@ export function DepthEditorDialog({ onClose }: Props) {
                 spellCheck={false}
               />
               <span className={styles.cellsBadge}>
-                {totalMarks(it.seats)} 标记
+                {countDepthMarks(it.depth)} 标记
               </span>
               <button
                 type="button"

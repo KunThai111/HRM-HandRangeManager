@@ -12,6 +12,12 @@ import styles from '@/styles/rangeDetail.module.css';
 interface Props {
   /** 当前被放大查看的 hand（如 `AKs`），由父组件保证非空时才挂载本组件。 */
   hand: string;
+  /**
+   * 是否进入「备注编辑」子模式：仅在 `draft.editing && Shift+点击该格子` 时由 RangePage 设为 true。
+   * - true 且 editing → 渲染 textarea（自动 focus）
+   * - 否则 → 没备注就不渲染备注栏；有备注就只读展示
+   */
+  editingNote: boolean;
   onClose: () => void;
 }
 
@@ -78,20 +84,33 @@ function useBreakdown(hand: string): BreakdownItem[] {
   }, [cells, customActions, hand]);
 }
 
-export function RangeDetail({ hand, onClose }: Props) {
+export function RangeDetail({ hand, editingNote, onClose }: Props) {
   const draft = useDraft();
   const notes = useNotes();
   const breakdown = useBreakdown(hand);
   const persisted = notes[hand] ?? '';
 
+  const editable = draft.editing && editingNote;
+
   // 备注本地缓冲：每次按键只更新本地 state，避免在打字时反复触发 draft 比对 / dirty。
   // 失焦 / Cmd+Enter / 切 hand / 组件卸载时再 commit 到 store。
   const [text, setText] = useState(persisted);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 外部 notes 变了（切换 hand / 切换 range / 撤销后 dirty 回滚等）→ 重置输入框。
   useEffect(() => {
     setText(persisted);
   }, [persisted, hand]);
+
+  // 进入备注编辑子模式 → 自动 focus textarea
+  useEffect(() => {
+    if (editable && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(text.length, text.length);
+    }
+    // 仅在 editable 切换时触发，避免每次 text 变化都重选
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, hand]);
 
   // 通过 ref 暴露最新文本，给「hand 切换 / 卸载」时的 cleanup 用，
   // 避免用户未失焦就点别的格子导致输入被丢弃。
@@ -104,6 +123,7 @@ export function RangeDetail({ hand, onClose }: Props) {
     const currentHand = hand;
     return () => {
       const latest = textRef.current;
+      // 只有用户进入过编辑态 / 文本真的变化时才提交，避免无谓 dirty
       rangeActions.setNote(currentHand, latest);
     };
   }, [hand]);
@@ -113,6 +133,8 @@ export function RangeDetail({ hand, onClose }: Props) {
       rangeActions.setNote(hand, text);
     }
   }, [text, persisted, hand]);
+
+  const showNoteSection = editable || persisted.length > 0;
 
   return (
     <aside className={styles.panel} data-range-detail aria-label={`${hand} 详细信息`}>
@@ -156,32 +178,38 @@ export function RangeDetail({ hand, onClose }: Props) {
         </ul>
       </section>
 
-      <section className={styles.section}>
-        <div className={styles.sectionTitle}>备注</div>
-        <textarea
-          className={styles.notesArea}
-          rows={5}
-          value={text}
-          placeholder={
-            draft.rangeId
-              ? `给 ${hand} 写点笔记（任何模式都可编辑，保存时随方案一起落盘）`
-              : '先选择或新建一个范围'
-          }
-          disabled={!draft.rangeId}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault();
-              commit();
-              (e.currentTarget as HTMLTextAreaElement).blur();
-            }
-          }}
-        />
-        <div className={styles.notesHint}>
-          {text !== persisted ? '失焦自动保存 · ⌘/Ctrl+Enter 立即保存' : '已保存到草稿（仍需点顶部「保存」落盘）'}
-        </div>
-      </section>
+      {showNoteSection && (
+        <section className={styles.section}>
+          <div className={styles.sectionTitle}>备注</div>
+          {editable ? (
+            <>
+              <textarea
+                ref={textareaRef}
+                className={styles.notesArea}
+                rows={5}
+                value={text}
+                placeholder={`给 ${hand} 写点笔记（保存时随方案一起落盘）`}
+                onChange={(e) => setText(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    commit();
+                    (e.currentTarget as HTMLTextAreaElement).blur();
+                  }
+                }}
+              />
+              <div className={styles.notesHint}>
+                {text !== persisted
+                  ? '失焦自动保存 · ⌘/Ctrl+Enter 立即保存'
+                  : '已保存到草稿（仍需点顶部「保存」落盘）'}
+              </div>
+            </>
+          ) : (
+            <p className={styles.notesReadonly}>{persisted}</p>
+          )}
+        </section>
+      )}
     </aside>
   );
 }

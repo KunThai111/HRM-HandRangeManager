@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:debug": "cross-env VITE_DEBUG_NO_AUTH=1 vite",
     "dev:server": "npm --prefix server run dev",
     "dev:all": "concurrently -k -n web,api -c blue,magenta \"npm run dev\" \"npm run dev:server\"",
     "build": "tsc --noEmit && vite build",

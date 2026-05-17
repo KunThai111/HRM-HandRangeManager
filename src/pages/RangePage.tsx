@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionToolbar } from '@/components/ActionToolbar';
 import { RangeDetail } from '@/components/RangeDetail';
 import { RangeGrid } from '@/components/RangeGrid';
@@ -12,14 +12,29 @@ export function RangePage() {
   // 空字符串 = 未选中任何动作；此时禁止涂色，需用户先在 ActionToolbar 添加自定义按钮
   const [action, setAction] = useState<Action>('');
   /**
-   * 当前被放大查看的 hand（非编辑模式下点击有色格子触发）。
+   * 当前被放大查看的 hand（非编辑模式：点击有色格子；编辑模式：Shift+点击任意格子）。
    * 提升到 App 层是为了让 RangeDetail 也能读到，并据此显示/隐藏。
    */
   const [zoomedHand, setZoomedHand] = useState<string | null>(null);
+  /**
+   * 是否处于「备注编辑」子模式。仅当 editing && Shift+click 触发时为 true。
+   * 决定 RangeDetail 中是否显示可编辑 textarea。
+   */
+  const [editingNote, setEditingNote] = useState(false);
   const draft = useDraft();
   const customActions = useCustomActions();
+  const wasEditingRef = useRef(draft.editing);
 
   useEffect(() => {
+    const wasEditing = wasEditingRef.current;
+    wasEditingRef.current = draft.editing;
+
+    // 刚从编辑模式退出（确定 / 取消）：清空行为按钮选中态
+    if (wasEditing && !draft.editing) {
+      if (action !== '') setAction('');
+      return;
+    }
+
     // 当前 action 仍是合法 custom id → 不动
     if (action !== '' && customActions.some((c) => c.id === action)) return;
     if (draft.editing) {
@@ -32,10 +47,26 @@ export function RangePage() {
     }
   }, [draft.rangeId, draft.editing, customActions, action]);
 
-  // 切换 range 时，自动清掉放大态（不同 range 下同名格子的涂色不一样）
+  // 切换 range / 退出编辑 时，自动清掉放大态
   useEffect(() => {
     setZoomedHand(null);
+    setEditingNote(false);
   }, [draft.rangeId]);
+
+  useEffect(() => {
+    // 退出编辑模式时关掉备注编辑子状态（zoom 自身可在非编辑下保留供查看）
+    if (!draft.editing) setEditingNote(false);
+  }, [draft.editing]);
+
+  // 子组件回调：要求设定 zoom 与是否进入备注编辑模式（editingNote 仅在编辑模式下生效）
+  const onZoomChange = useCallback(
+    (hand: string | null, opts?: { editNote?: boolean }) => {
+      setZoomedHand(hand);
+      if (hand === null) setEditingNote(false);
+      else setEditingNote(!!opts?.editNote);
+    },
+    [],
+  );
 
   return (
     <div className="app-shell">
@@ -47,7 +78,7 @@ export function RangePage() {
             <RangeGrid
               currentAction={action}
               zoomedHand={zoomedHand}
-              onZoomChange={setZoomedHand}
+              onZoomChange={onZoomChange}
             />
             <div className="work-right">
               <ActionToolbar
@@ -58,7 +89,8 @@ export function RangePage() {
               {zoomedHand && (
                 <RangeDetail
                   hand={zoomedHand}
-                  onClose={() => setZoomedHand(null)}
+                  editingNote={editingNote}
+                  onClose={() => onZoomChange(null)}
                 />
               )}
             </div>

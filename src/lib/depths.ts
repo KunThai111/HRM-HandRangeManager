@@ -1,32 +1,37 @@
-import type { Action } from './colors';
+import type { Action, CustomAction } from './colors';
 
 /**
- * 一份「(深度, 英雄座位)」下的范围数据：
+ * 一个深度下「(座位)」对应的独立 cells / customActions 副本。
  *
- * - `overall` 是「总体范围」：当用户在「对战」行里没选具体对战座位时显示/编辑的那张表。
- * - `vs[opponentId]` 是「针对该对战座位的独立范围」。规则：
- *    1. 若 `vs[opp]` 不存在 → 显示时回退到 `overall`（视为继承）。
- *    2. 用户对该对战做出第一笔涂色时，按 copy-on-write 把 `overall` 浅拷贝到 `vs[opp]`，
- *       然后才在 `vs[opp]` 上写入新动作；之后该对战与总体彻底独立。
- *
- * 规约：
- * - `overall` / `vs[*]` 中只保存「非 fold」的格子；空 fold 不入库。
- * - 若一个 SeatBucket 的 overall 与所有 vs[*] 都为空，外层 `seats[seatId]` 字段直接不出现。
+ * - `cells` / `customActions` 是该座位完全独立的版本；
+ *   一旦座位独立后，shared 的修改不再影响它，它的修改也不再写回 shared。
  */
-export interface SeatBucket {
-  overall: Record<string, Action>;
-  vs: Record<string, Record<string, Action>>;
+export interface SeatOverride {
+  cells: Record<string, Action>;
+  customActions: CustomAction[];
 }
 
 /**
- * 一个深度对应多张范围表，每张属于一个英雄座位。
+ * 一个深度下的范围数据。
  *
- * `seats` 字典 key 是英雄座位 id（见 `lib/seats.ts`），value 是 SeatBucket（见上）。
- * 没有任何涂色的 (depth, heroSeat) 不会出现在 `seats` 中。
+ * 模型（座位间「跟随 / 独立」）：
+ * - `sharedCells` / `sharedCustomActions`：「跟随」类座位共同看到 / 编辑的内容。
+ * - `seatOverrides[seatId]`：已独立座位的私有内容；存在 → 该座位独立。
+ * - `primarySeatId`：第一个对该深度做出修改的座位。
+ *    - null = 还没有任何编辑发生；首次编辑会把它设为当前座位，并写入 shared。
+ *    - 等于当前编辑座位 → 仍写 shared（让其它「跟随」座位感受到改动）。
+ *    - 等于其它座位 → 当前座位是「跟随者」，第一次写入会 COW 到 seatOverrides[当前座位]。
+ *
+ * 规约：
+ * - `sharedCells` / `seatOverrides[*].cells` 中只保存「非 fold」格子；空 fold 不入库。
+ * - 若一个 depth 完全空（shared 与 overrides 全部为空，且 customActions 也为空），仍保留以维持 label。
  */
 export interface DepthGrid {
   label: string;
-  seats: Record<string, SeatBucket>;
+  sharedCells: Record<string, Action>;
+  sharedCustomActions: CustomAction[];
+  seatOverrides: Record<string, SeatOverride>;
+  primarySeatId: string | null;
 }
 
 export const DEFAULT_DEPTH_LABELS: readonly string[] = [
@@ -38,21 +43,55 @@ export const DEFAULT_DEPTH_LABELS: readonly string[] = [
 ];
 
 export function emptyDepth(label: string): DepthGrid {
-  return { label, seats: {} };
+  return {
+    label,
+    sharedCells: {},
+    sharedCustomActions: [],
+    seatOverrides: {},
+    primarySeatId: null,
+  };
 }
 
-export function emptyBucket(): SeatBucket {
-  return { overall: {}, vs: {} };
+export function emptyOverride(): SeatOverride {
+  return { cells: {}, customActions: [] };
 }
 
-/** Bucket 是否完全空（overall 为空且无任何独立 vs）。 */
-export function isBucketEmpty(b: SeatBucket | undefined): boolean {
-  if (!b) return true;
-  if (Object.keys(b.overall).length > 0) return false;
-  for (const k of Object.keys(b.vs)) {
-    if (Object.keys(b.vs[k]).length > 0) return false;
-  }
-  return true;
+/** 该座位是否已经在该 depth 下独立。 */
+export function isSeatIndependent(depth: DepthGrid, seatId: string): boolean {
+  return Object.prototype.hasOwnProperty.call(depth.seatOverrides, seatId);
+}
+
+/**
+ * 该座位「当前可编辑的目标范围」是 shared 还是它自己的 override：
+ * - 已独立 → 'override'
+ * - 未独立 + 是 primary（或还没人独占 primary）→ 'shared'
+ * - 未独立 + primary 是别人 → 'follower'（任何写入都会触发 COW 到 override）
+ */
+export function seatScope(
+  depth: DepthGrid,
+  seatId: string,
+): 'override' | 'shared' | 'follower' {
+  if (isSeatIndependent(depth, seatId)) return 'override';
+  if (depth.primarySeatId == null || depth.primarySeatId === seatId) return 'shared';
+  return 'follower';
+}
+
+/** 该座位查看时应该看到的 cells（独立 → 自己的；否则 → shared）。 */
+export function getCellsForSeat(
+  depth: DepthGrid,
+  seatId: string,
+): Record<string, Action> {
+  const o = depth.seatOverrides[seatId];
+  return o ? o.cells : depth.sharedCells;
+}
+
+/** 该座位查看时应该看到的 customActions（独立 → 自己的；否则 → shared）。 */
+export function getCustomActionsForSeat(
+  depth: DepthGrid,
+  seatId: string,
+): CustomAction[] {
+  const o = depth.seatOverrides[seatId];
+  return o ? o.customActions : depth.sharedCustomActions;
 }
 
 export function depthsFromLabels(labels: readonly string[]): DepthGrid[] {
@@ -95,39 +134,13 @@ export function countNonFold(cells: Record<string, Action>): number {
 }
 
 /**
- * 取 (heroSeat, opponent) 在某 SeatBucket 下应当渲染的 cells：
- * - opponent = null → overall
- * - vs[opponent] 存在 → vs[opponent]
- * - vs[opponent] 不存在 → 回退到 overall（继承显示，不修改 vs）
- */
-export function bucketCellsFor(
-  bucket: SeatBucket | undefined,
-  opponentId: string | null,
-): Record<string, Action> {
-  if (!bucket) return {};
-  if (opponentId == null) return bucket.overall;
-  return bucket.vs[opponentId] ?? bucket.overall;
-}
-
-/** 该对战是否已与总体独立（即 vs[opp] 中确实存在条目）。 */
-export function isOpponentIndependent(
-  bucket: SeatBucket | undefined,
-  opponentId: string,
-): boolean {
-  return !!bucket && Object.prototype.hasOwnProperty.call(bucket.vs, opponentId);
-}
-
-/**
- * 统计一个 DepthGrid 下所有 (heroSeat, overall + 各 vs) 的非 fold 格子数总和。
- * 用于深度编辑弹窗的总标记数显示。
+ * 一个深度的「独有数据点」总数：sharedCells + 各 seatOverrides 的 cells。
+ * 用于深度编辑弹窗显示「该深度有多少标记」。
  */
 export function countDepthMarks(depth: DepthGrid): number {
-  let n = 0;
-  for (const bucket of Object.values(depth.seats)) {
-    n += Object.keys(bucket.overall).length;
-    for (const cells of Object.values(bucket.vs)) {
-      n += Object.keys(cells).length;
-    }
+  let n = Object.keys(depth.sharedCells).length;
+  for (const o of Object.values(depth.seatOverrides)) {
+    n += Object.keys(o.cells).length;
   }
   return n;
 }

@@ -4,8 +4,14 @@
  *
  * In dev, requests go through Vite's proxy (`/api`, `/auth` -> :3001).
  * In prod, set `VITE_API_BASE` to the deployed server origin.
+ *
+ * Debug 模式（VITE_DEBUG_NO_AUTH=1）：
+ * - 不需要起 server，所有 /api/* 请求被短路成本地 mock。
+ * - me() 直接返回固定的「Debug User」；sync 全部返回空，写本地即生效。
+ * - 用法：`npm run dev:debug`
  */
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+export const DEBUG_NO_AUTH = import.meta.env.VITE_DEBUG_NO_AUTH === '1';
 
 export class ApiError extends Error {
   constructor(
@@ -57,6 +63,13 @@ export interface CurrentUser {
   picture: string | null;
 }
 
+const DEBUG_USER: CurrentUser = {
+  id: 0,
+  email: 'debug@local',
+  name: 'Debug User',
+  picture: null,
+};
+
 /**
  * 与 server/src/index.ts 的 /api/sync/* 路由对齐的线上数据形态。
  * - `payload` 不被服务端解读，纯透传；deleted=true 时为 null。
@@ -102,18 +115,36 @@ export interface SyncPushResponse {
 }
 
 export const api = {
-  me: () => request<CurrentUser>('/api/me'),
-  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  me: () =>
+    DEBUG_NO_AUTH
+      ? Promise.resolve({ ...DEBUG_USER })
+      : request<CurrentUser>('/api/me'),
+  logout: () =>
+    DEBUG_NO_AUTH
+      ? Promise.resolve({ ok: true } as const)
+      : request<{ ok: true }>('/auth/logout', { method: 'POST' }),
   /** Returns the absolute URL the browser should navigate to in order to start OAuth. */
   googleLoginUrl: (next?: string) => {
     const search = next ? `?next=${encodeURIComponent(next)}` : '';
     return `${API_BASE}/auth/google${search}`;
   },
   syncPull: <R = unknown, T = unknown, S = unknown>() =>
-    request<SyncPullResponse<R, T, S>>('/api/sync/pull'),
+    DEBUG_NO_AUTH
+      ? Promise.resolve({
+          ranges: [],
+          tournaments: [],
+          settings: null,
+        } as SyncPullResponse<R, T, S>)
+      : request<SyncPullResponse<R, T, S>>('/api/sync/pull'),
   syncPush: <R = unknown, T = unknown, S = unknown>(body: SyncPushBody<R, T, S>) =>
-    request<SyncPushResponse>('/api/sync/push', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+    DEBUG_NO_AUTH
+      ? Promise.resolve({
+          ranges: {},
+          tournaments: {},
+          settings: 'noop',
+        } as SyncPushResponse)
+      : request<SyncPushResponse>('/api/sync/push', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
 };

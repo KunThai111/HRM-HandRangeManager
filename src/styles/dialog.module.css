@@ -133,6 +133,18 @@
   border-color: #f25563;
 }
 
+.footer button:global(.danger) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.footer button:global(.danger):hover:not(:disabled) {
+  background: #e94458;
+  border-color: #e94458;
+  color: #fff;
+}
+
 .empty {
   padding: 12px;
   color: var(--text-2);

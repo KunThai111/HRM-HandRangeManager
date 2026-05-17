@@ -47,7 +47,6 @@
   font-weight: 600;
   letter-spacing: 0.3px;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
 /* 未独立（跟随总体）的对战按钮：文字偏淡，提示其内容是继承的 */

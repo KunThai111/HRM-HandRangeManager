@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { logout, useAuth } from '@/store/useAuthStore';
+import { DEBUG_NO_AUTH } from '@/lib/api';
 import { pullAndMerge, useSyncState } from '@/lib/sync';
 import styles from '@/styles/userMenu.module.css';
 
@@ -94,7 +95,8 @@ export function UserMenu() {
             onClick={() => {
               void pullAndMerge();
             }}
-            disabled={sync.status === 'syncing'}
+            disabled={sync.status === 'syncing' || DEBUG_NO_AUTH}
+            title={DEBUG_NO_AUTH ? 'Debug 模式下不连接服务端' : undefined}
           >
             立即同步
           </button>
@@ -103,6 +105,8 @@ export function UserMenu() {
             role="menuitem"
             className={styles.menuItemDanger}
             onClick={handleLogout}
+            disabled={DEBUG_NO_AUTH}
+            title={DEBUG_NO_AUTH ? 'Debug 模式下无登录可退出' : undefined}
           >
             退出登录
           </button>

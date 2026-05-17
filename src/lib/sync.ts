@@ -11,6 +11,7 @@ import {
   _subscribeTournamentStore,
 } from '@/store/useTournamentStore';
 import type { PersistedState, RangeDoc } from '@/store/storage';
+import { sanitizeRangeDoc } from '@/store/storage';
 import { isValidSeatId } from './seats';
 import type { Tournament } from './tournaments';
 
@@ -104,7 +105,6 @@ interface SettingsPayload {
   lastOpenedRangeId: string | null;
   lastOpenedDepthLabel: string | null;
   lastOpenedSeatId: string | null;
-  lastOpenedOpponentId: string | null;
 }
 
 function settingsFromPersisted(p: PersistedState): SettingsPayload {
@@ -113,7 +113,6 @@ function settingsFromPersisted(p: PersistedState): SettingsPayload {
     lastOpenedRangeId: p.lastOpenedRangeId,
     lastOpenedDepthLabel: p.lastOpenedDepthLabel,
     lastOpenedSeatId: p.lastOpenedSeatId,
-    lastOpenedOpponentId: p.lastOpenedOpponentId,
   };
 }
 
@@ -133,10 +132,6 @@ function sanitizeServerSettings(raw: unknown): SettingsPayload | null {
     lastOpenedSeatId:
       typeof r.lastOpenedSeatId === 'string' && isValidSeatId(r.lastOpenedSeatId)
         ? r.lastOpenedSeatId
-        : null,
-    lastOpenedOpponentId:
-      typeof r.lastOpenedOpponentId === 'string' && isValidSeatId(r.lastOpenedOpponentId)
-        ? r.lastOpenedOpponentId
         : null,
   };
 }
@@ -258,11 +253,13 @@ export async function pullAndMerge(): Promise<void> {
     const rangeMerged = new Map<string, RangeSide>();
 
     for (const item of pull.ranges) {
+      // 服务端返回的 payload 可能是历史 v2 结构；走一遍 sanitize 升级到 v3
+      const payload = item.deleted ? null : sanitizeRangeDoc(item.payload);
       rangeMerged.set(item.id, {
         source: 'server',
         updatedAt: item.updatedAt,
-        deleted: item.deleted,
-        payload: item.deleted ? null : (item.payload as RangeDoc | null),
+        deleted: item.deleted || !payload,
+        payload,
       });
     }
     for (const r of persisted.ranges) {
@@ -315,7 +312,6 @@ export async function pullAndMerge(): Promise<void> {
       lastOpenedRangeId: nextSettingsPayload.lastOpenedRangeId,
       lastOpenedDepthLabel: nextSettingsPayload.lastOpenedDepthLabel,
       lastOpenedSeatId: nextSettingsPayload.lastOpenedSeatId,
-      lastOpenedOpponentId: nextSettingsPayload.lastOpenedOpponentId,
       settingsUpdatedAt: nextSettingsAt,
     };
     _replaceRangePersisted(nextPersisted);

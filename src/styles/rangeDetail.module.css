@@ -161,6 +161,19 @@
   line-height: 1.4;
 }
 
+.notesReadonly {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  color: var(--text-0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
 @media (max-width: 720px) {
   .panel {
     align-self: stretch;

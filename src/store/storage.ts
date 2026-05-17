@@ -3,7 +3,7 @@ import { cellSegments, makeCellValueFromSegments } from '@/lib/colors';
 import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
-  type SeatBucket,
+  type SeatOverride,
   emptyDepth,
 } from '@/lib/depths';
 import { ALL_HAND_KEYS } from '@/lib/hands';
@@ -11,8 +11,9 @@ import { isValidSeatId, seatsForCount } from '@/lib/seats';
 
 const VALID_HAND_KEYS = new Set<string>(ALL_HAND_KEYS);
 
-const STORAGE_KEY = 'nlh-range:v2';
-const LEGACY_KEY = 'nlh-range:v1';
+const STORAGE_KEY = 'nlh-range:v3';
+const LEGACY_V2_KEY = 'nlh-range:v2';
+const LEGACY_V1_KEY = 'nlh-range:v1';
 
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 9;
@@ -32,11 +33,9 @@ export interface RangeDoc {
   /** 牌桌人数（2-9 人） */
   seats: number;
   depths: DepthGrid[];
-  /** 用户在编辑模式下添加的自定义动作按钮（按 range 维度独立）。 */
-  customActions: CustomAction[];
   /**
    * 单格备注：key = hand（如 `AKs`/`AA`/`AKo`），value = 用户输入的文字。
-   * 按 range 维度存储，所有深度/座位/对战共用同一份。
+   * 按 range 维度存储，所有深度/座位共用同一份。
    * 空字符串与缺失视为「无备注」，序列化时会被剔除。
    */
   notes: Record<string, string>;
@@ -45,14 +44,12 @@ export interface RangeDoc {
 }
 
 export interface PersistedState {
-  version: 2;
+  version: 3;
   defaultDepthLabels: string[];
   ranges: RangeDoc[];
   lastOpenedRangeId: string | null;
   lastOpenedDepthLabel: string | null;
   lastOpenedSeatId: string | null;
-  /** null = 总体（默认），string = 具体对战座位 id */
-  lastOpenedOpponentId: string | null;
   /**
    * 已删除范围的墓碑：id → 删除时间戳（ms）。
    * 只用于服务端同步时保证「在 A 设备删的范围，B 设备拉下来后也会被清掉」。
@@ -60,7 +57,7 @@ export interface PersistedState {
    */
   rangeTombstones: Record<string, number>;
   /**
-   * 偏好类字段（defaultDepthLabels + 上次打开的范围/深度/座位/对战）整体的版本时间戳。
+   * 偏好类字段（defaultDepthLabels + 上次打开的范围/深度/座位）整体的版本时间戳。
    * 任何这几项变更都要 bump 此值，服务端按它做整体 LWW。
    * 旧数据没有该字段时回退为 0，第一次有变更后会被覆盖。
    */
@@ -98,6 +95,7 @@ function sanitizeCells(raw: unknown): Record<string, Action> {
   const out: Record<string, Action> = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!VALID_HAND_KEYS.has(k)) continue;
     const sanitized = sanitizeCellValue(v);
     if (sanitized !== null) out[k] = sanitized;
   }
@@ -145,73 +143,138 @@ function sanitizeNotes(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** 把任意原始数据规范化成 SeatBucket；若整体为空返回 null（外层会跳过）。 */
-function sanitizeSeatBucket(raw: unknown): SeatBucket | null {
+function sanitizeOverride(raw: unknown): SeatOverride | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
-
-  // 新结构：{ overall, vs: { oppId: cells } }
-  if (r.overall !== undefined || r.vs !== undefined) {
-    const overall = sanitizeCells(r.overall);
-    const vs: Record<string, Record<string, Action>> = {};
-    if (r.vs && typeof r.vs === 'object') {
-      for (const [oppId, cells] of Object.entries(r.vs as Record<string, unknown>)) {
-        if (!isValidSeatId(oppId)) continue;
-        const sanitized = sanitizeCells(cells);
-        if (Object.keys(sanitized).length > 0) vs[oppId] = sanitized;
-      }
-    }
-    if (Object.keys(overall).length === 0 && Object.keys(vs).length === 0) return null;
-    return { overall, vs };
-  }
-
-  // 旧结构（v2 早期）：seats[seatId] 直接是 Record<HandKey, Action>
-  const overall = sanitizeCells(raw);
-  if (Object.keys(overall).length === 0) return null;
-  return { overall, vs: {} };
+  const cells = sanitizeCells(r.cells);
+  const customActions = sanitizeCustomActions(r.customActions);
+  if (Object.keys(cells).length === 0 && customActions.length === 0) return null;
+  return { cells, customActions };
 }
 
-function sanitizeSeatsMap(raw: unknown): Record<string, SeatBucket> {
-  const out: Record<string, SeatBucket> = {};
+function sanitizeSeatOverrides(raw: unknown): Record<string, SeatOverride> {
+  const out: Record<string, SeatOverride> = {};
   if (!raw || typeof raw !== 'object') return out;
-  for (const [seatId, bucketRaw] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [seatId, overrideRaw] of Object.entries(raw as Record<string, unknown>)) {
     if (!isValidSeatId(seatId)) continue;
-    const bucket = sanitizeSeatBucket(bucketRaw);
-    if (bucket) out[seatId] = bucket;
+    const override = sanitizeOverride(overrideRaw);
+    if (override) out[seatId] = override;
   }
   return out;
 }
 
-/**
- * 把单一 cells 升级为「按第一个座位归档」的 seats 映射（仅总体，无对战独立数据）。
- * 用于 v1 / 极旧 v2 (`DepthGrid.cells`) 数据的兼容。
- */
-function liftCellsToSeats(
-  cells: Record<string, Action>,
-  rangeSeats: number,
-): Record<string, SeatBucket> {
-  if (Object.keys(cells).length === 0) return {};
-  const order = seatsForCount(rangeSeats);
-  const firstSeat = order[0];
-  if (!firstSeat) return {};
-  return { [firstSeat]: { overall: cells, vs: {} } };
+function sanitizeDepthV3(raw: unknown): DepthGrid | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.label !== 'string' || !r.label) return null;
+  const sharedCells = sanitizeCells(r.sharedCells);
+  const sharedCustomActions = sanitizeCustomActions(r.sharedCustomActions);
+  const seatOverrides = sanitizeSeatOverrides(r.seatOverrides);
+  const primary =
+    typeof r.primarySeatId === 'string' && isValidSeatId(r.primarySeatId)
+      ? r.primarySeatId
+      : null;
+  // primary 不能同时是「已独立」座位
+  const primarySeatId =
+    primary && Object.prototype.hasOwnProperty.call(seatOverrides, primary)
+      ? null
+      : primary;
+  return {
+    label: r.label,
+    sharedCells,
+    sharedCustomActions,
+    seatOverrides,
+    primarySeatId,
+  };
 }
 
-function sanitizeDepth(raw: unknown, rangeSeats: number): DepthGrid | null {
+/**
+ * 把 v2 的一个 depth（含 seats[seatId].overall / .vs[oppId]）迁移成 v3：
+ * - vs[*] 数据直接丢弃（对战概念已整体移除）。
+ * - 第一个有 overall 数据的座位 → 升级成 primary，把它的 overall 写入 sharedCells。
+ *   该座位的 customActions = rangeCustomActions（保持 v2 时所有座位看到同样按钮的语义）。
+ * - 其它有 overall 数据的座位 → 写成 seatOverrides[seatId]，
+ *   各自的 customActions 也复制一份 rangeCustomActions（迁移后用户可以单独裁剪它）。
+ * - 没有任何 overall 数据的座位 → 不出现，仍是「跟随 shared」。
+ */
+function migrateDepthFromV2(
+  raw: unknown,
+  rangeCustomActions: CustomAction[],
+  rangeSeats: number,
+): DepthGrid | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.label !== 'string' || !r.label) return null;
 
-  if (r.seats !== undefined) {
-    return { label: r.label, seats: sanitizeSeatsMap(r.seats) };
+  // v3 字段优先（如果数据已是 v3 或部分 v3）
+  if (r.sharedCells !== undefined || r.seatOverrides !== undefined || r.primarySeatId !== undefined) {
+    return sanitizeDepthV3(r);
   }
-  if (r.cells !== undefined) {
-    return {
-      label: r.label,
-      seats: liftCellsToSeats(sanitizeCells(r.cells), rangeSeats),
-    };
+
+  const order = seatsForCount(rangeSeats);
+  let primary: string | null = null;
+  let sharedCells: Record<string, Action> = {};
+  const seatOverrides: Record<string, SeatOverride> = {};
+  const sharedCustomActions = rangeCustomActions.map((c) => ({ ...c }));
+
+  if (r.seats !== undefined && r.seats && typeof r.seats === 'object') {
+    const rawSeats = r.seats as Record<string, unknown>;
+    // 按 seatsForCount 顺序遍历，保证 primary 选择稳定
+    const seatIds = (order as readonly string[]).filter((id) =>
+      Object.prototype.hasOwnProperty.call(rawSeats, id),
+    );
+    // 也兜底接收顺序外的 seat id
+    for (const id of Object.keys(rawSeats)) {
+      if (!(seatIds as string[]).includes(id) && isValidSeatId(id)) {
+        seatIds.push(id);
+      }
+    }
+    for (const seatId of seatIds) {
+      const bucketRaw = rawSeats[seatId];
+      if (!bucketRaw || typeof bucketRaw !== 'object') continue;
+      const overall = sanitizeCells((bucketRaw as Record<string, unknown>).overall);
+      if (Object.keys(overall).length === 0) continue;
+      if (!primary) {
+        primary = seatId;
+        sharedCells = overall;
+      } else {
+        seatOverrides[seatId] = {
+          cells: overall,
+          customActions: rangeCustomActions.map((c) => ({ ...c })),
+        };
+      }
+    }
+  } else if (r.cells !== undefined) {
+    // 极旧 v2：DepthGrid.cells 直接是 cells，按第一个座位归档
+    const cells = sanitizeCells(r.cells);
+    if (Object.keys(cells).length > 0) {
+      const firstSeat = order[0];
+      if (firstSeat) {
+        primary = firstSeat;
+        sharedCells = cells;
+      }
+    }
   }
-  return { label: r.label, seats: {} };
+
+  return {
+    label: r.label,
+    sharedCells,
+    sharedCustomActions,
+    seatOverrides,
+    primarySeatId: primary,
+  };
+}
+
+/**
+ * 把任意原始数据规范化为 v3 RangeDoc：
+ * - 接受 v3 形态（sharedCells / seatOverrides / primarySeatId）
+ * - 接受 v2 形态（顶层 customActions + depths[i].seats[seatId].overall/.vs）
+ * - 没有任何合法 depth → 返回 null
+ *
+ * 也会自动迁移 v2 的 range.customActions（range 级共享）→ 每个 depth 的 sharedCustomActions。
+ */
+export function sanitizeRangeDoc(raw: unknown): RangeDoc | null {
+  return sanitizeRange(raw);
 }
 
 function sanitizeRange(raw: unknown): RangeDoc | null {
@@ -223,9 +286,11 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
   if (!Array.isArray(r.depths)) return null;
 
   const seats = clampSeats(r.seats);
+  // v2 兼容：旧数据有顶层 customActions（range 级共享）；v3 已废弃，这里读出来用作 depth 的 sharedCustomActions 默认值
+  const legacyCustomActions = sanitizeCustomActions(r.customActions);
 
   const depths = r.depths
-    .map((d) => sanitizeDepth(d, seats))
+    .map((d) => migrateDepthFromV2(d, legacyCustomActions, seats))
     .filter((d): d is DepthGrid => d !== null);
 
   // 去重 label（保留第一次出现）
@@ -244,7 +309,6 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
     name: r.name,
     seats,
     depths: deduped,
-    customActions: sanitizeCustomActions(r.customActions),
     notes: sanitizeNotes(r.notes),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -253,8 +317,8 @@ function sanitizeRange(raw: unknown): RangeDoc | null {
 
 /**
  * v1 旧结构：`{ version: 1, ranges: [{ id, stack, name, cells, createdAt, updatedAt }], lastOpenedStack, lastOpenedId }`
- * v2 新结构按 name 合并：同名 range 合并为一个 RangeDoc，按 stack 字段填入 depths，
- * cells 暂归入 9 人桌 UTG 座位的「总体」（旧结构无座位 / 对战概念）。
+ * v3 新结构按 name 合并：同名 range 合并为一个 RangeDoc，按 stack 字段填入 depths，
+ * cells 暂归入 9 人桌 UTG 座位的 sharedCells（旧结构无座位 / 对战概念）。
  */
 function migrateV1(raw: unknown): PersistedState | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -273,11 +337,20 @@ function migrateV1(raw: unknown): PersistedState | null {
     if (!id || !name || !stack) continue;
 
     const cells = sanitizeCells(it.cells);
-    const seatsMap = liftCellsToSeats(cells, DEFAULT_SEATS);
+    const seatOrder = seatsForCount(DEFAULT_SEATS);
+    const firstSeat = seatOrder[0];
+    const depth: DepthGrid = {
+      label: stack,
+      sharedCells: Object.keys(cells).length > 0 ? cells : {},
+      sharedCustomActions: [],
+      seatOverrides: {},
+      primarySeatId: Object.keys(cells).length > 0 ? firstSeat : null,
+    };
+
     const existing = byName.get(name);
     if (existing) {
       if (existing.depths.some((d) => d.label === stack)) continue;
-      existing.depths.push({ label: stack, seats: seatsMap });
+      existing.depths.push(depth);
       existing.updatedAt = Math.max(existing.updatedAt, updatedAt);
       existing.createdAt = Math.min(existing.createdAt, createdAt);
     } else {
@@ -285,8 +358,7 @@ function migrateV1(raw: unknown): PersistedState | null {
         id,
         name,
         seats: DEFAULT_SEATS,
-        depths: [{ label: stack, seats: seatsMap }],
-        customActions: [],
+        depths: [depth],
         notes: {},
         createdAt,
         updatedAt,
@@ -295,14 +367,13 @@ function migrateV1(raw: unknown): PersistedState | null {
   }
 
   return {
-    version: 2,
+    version: 3,
     defaultDepthLabels: [...DEFAULT_DEPTH_LABELS],
     ranges: [...byName.values()],
     lastOpenedRangeId: null,
     lastOpenedDepthLabel:
       typeof r.lastOpenedStack === 'string' ? (r.lastOpenedStack as string) : null,
     lastOpenedSeatId: null,
-    lastOpenedOpponentId: null,
     rangeTombstones: {},
     settingsUpdatedAt: 0,
   };
@@ -319,53 +390,67 @@ function sanitizeTombstones(raw: unknown): Record<string, number> {
   return out;
 }
 
+/**
+ * 从一段 raw v2/v3 PersistedState（来自 localStorage 或服务端 pull）规范化为 v3。
+ * - 顶层版本不区分：里面的 ranges 会逐个用 sanitizeRange 清洗，
+ *   旧 v2 的 SeatBucket / range.customActions / lastOpenedOpponentId 字段会被自动迁移或丢弃。
+ */
+export function sanitizePersisted(raw: unknown): PersistedState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const parsed = raw as Partial<PersistedState> & Record<string, unknown>;
+  if (!Array.isArray(parsed.ranges)) return null;
+  const ranges = parsed.ranges
+    .map(sanitizeRange)
+    .filter((x): x is RangeDoc => x !== null);
+  const defaultDepthLabels =
+    Array.isArray(parsed.defaultDepthLabels) &&
+    parsed.defaultDepthLabels.every((x) => typeof x === 'string')
+      ? (parsed.defaultDepthLabels as string[])
+      : [...DEFAULT_DEPTH_LABELS];
+  return {
+    version: 3,
+    defaultDepthLabels,
+    ranges,
+    lastOpenedRangeId:
+      typeof parsed.lastOpenedRangeId === 'string' ? parsed.lastOpenedRangeId : null,
+    lastOpenedDepthLabel:
+      typeof parsed.lastOpenedDepthLabel === 'string'
+        ? parsed.lastOpenedDepthLabel
+        : null,
+    lastOpenedSeatId:
+      typeof parsed.lastOpenedSeatId === 'string' && isValidSeatId(parsed.lastOpenedSeatId)
+        ? parsed.lastOpenedSeatId
+        : null,
+    rangeTombstones: sanitizeTombstones(parsed.rangeTombstones),
+    settingsUpdatedAt:
+      typeof parsed.settingsUpdatedAt === 'number' &&
+      Number.isFinite(parsed.settingsUpdatedAt)
+        ? parsed.settingsUpdatedAt
+        : 0,
+  };
+}
+
 export function loadState(): PersistedState {
   if (typeof localStorage === 'undefined') return cloneEmpty();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<PersistedState>;
-      if (parsed && parsed.version === 2 && Array.isArray(parsed.ranges)) {
-        const ranges = parsed.ranges
-          .map(sanitizeRange)
-          .filter((x): x is RangeDoc => x !== null);
-        const defaultDepthLabels =
-          Array.isArray(parsed.defaultDepthLabels) &&
-          parsed.defaultDepthLabels.every((x) => typeof x === 'string')
-            ? (parsed.defaultDepthLabels as string[])
-            : [...DEFAULT_DEPTH_LABELS];
-        return {
-          version: 2,
-          defaultDepthLabels,
-          ranges,
-          lastOpenedRangeId:
-            typeof parsed.lastOpenedRangeId === 'string' ? parsed.lastOpenedRangeId : null,
-          lastOpenedDepthLabel:
-            typeof parsed.lastOpenedDepthLabel === 'string'
-              ? parsed.lastOpenedDepthLabel
-              : null,
-          lastOpenedSeatId:
-            typeof parsed.lastOpenedSeatId === 'string' && isValidSeatId(parsed.lastOpenedSeatId)
-              ? parsed.lastOpenedSeatId
-              : null,
-          lastOpenedOpponentId:
-            typeof parsed.lastOpenedOpponentId === 'string' &&
-            isValidSeatId(parsed.lastOpenedOpponentId)
-              ? parsed.lastOpenedOpponentId
-              : null,
-          rangeTombstones: sanitizeTombstones(parsed.rangeTombstones),
-          settingsUpdatedAt:
-            typeof parsed.settingsUpdatedAt === 'number' &&
-            Number.isFinite(parsed.settingsUpdatedAt)
-              ? parsed.settingsUpdatedAt
-              : 0,
-        };
+      const parsed = sanitizePersisted(JSON.parse(raw));
+      if (parsed) return parsed;
+    }
+
+    const legacyV2 = localStorage.getItem(LEGACY_V2_KEY);
+    if (legacyV2) {
+      const parsed = sanitizePersisted(JSON.parse(legacyV2));
+      if (parsed) {
+        saveState(parsed);
+        return parsed;
       }
     }
 
-    const legacy = localStorage.getItem(LEGACY_KEY);
-    if (legacy) {
-      const migrated = migrateV1(JSON.parse(legacy));
+    const legacyV1 = localStorage.getItem(LEGACY_V1_KEY);
+    if (legacyV1) {
+      const migrated = migrateV1(JSON.parse(legacyV1));
       if (migrated) {
         saveState(migrated);
         return migrated;
@@ -381,13 +466,12 @@ export function loadState(): PersistedState {
 
 function cloneEmpty(): PersistedState {
   return {
-    version: 2,
+    version: 3,
     defaultDepthLabels: [...DEFAULT_DEPTH_LABELS],
     ranges: [],
     lastOpenedRangeId: null,
     lastOpenedDepthLabel: null,
     lastOpenedSeatId: null,
-    lastOpenedOpponentId: null,
     rangeTombstones: {},
     settingsUpdatedAt: 0,
   };
@@ -420,7 +504,6 @@ export function makeRange(
     name: name.trim() || 'Untitled',
     seats: clampSeats(seats),
     depths: depthLabels.map((l) => emptyDepth(l)),
-    customActions: [],
     notes: {},
     createdAt: now,
     updatedAt: now,

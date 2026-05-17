@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { ProfitChart } from '@/components/home/ProfitChart';
 import { StatCard } from '@/components/home/StatCard';
 import { TournamentList } from '@/components/home/TournamentList';
 import { formatPercent, formatUSD, summarize } from '@/lib/tournaments';
@@ -50,6 +51,8 @@ export function HomePage() {
             sub={summary.count > 0 ? `进入钱圈 ${summary.itmCount} / ${summary.count}` : '暂无记录'}
           />
         </div>
+
+        <ProfitChart tournaments={tournaments} />
 
         <div className={styles.quickRow}>
           <Link to="/range" className={styles.quickCard}>

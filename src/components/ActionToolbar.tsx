@@ -42,7 +42,7 @@ function CustomActionMenu({ action, onClose, onEdit, isUsing }: CustomMenuProps)
   const onDel = () => {
     onClose();
     const msg = isUsing
-      ? `确认删除「${action.label}」？该 range 中所有引用此按钮的格子会被清除。`
+      ? `确认删除「${action.label}」？当前作用域内所有引用此按钮的格子会被清除。`
       : `确认删除「${action.label}」？`;
     const ok = window.confirm(msg);
     if (!ok) return;
@@ -203,11 +203,9 @@ function useUsedActionIds(depths: ReturnType<typeof useDraft>['depths']): Set<st
     for (const s of cellSegments(v)) ids.add(s.id);
   };
   for (const d of depths) {
-    for (const bucket of Object.values(d.seats)) {
-      for (const v of Object.values(bucket.overall)) collect(v);
-      for (const cells of Object.values(bucket.vs)) {
-        for (const v of Object.values(cells)) collect(v);
-      }
+    for (const v of Object.values(d.sharedCells)) collect(v);
+    for (const o of Object.values(d.seatOverrides)) {
+      for (const v of Object.values(o.cells)) collect(v);
     }
   }
   return ids;

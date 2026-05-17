@@ -20,8 +20,11 @@ interface Props {
   currentAction: Action;
   /** 当前被放大的格子（受控）。null = 无放大。 */
   zoomedHand: string | null;
-  /** 切换放大格子的回调（用于关闭 / 切到另一格）。 */
-  onZoomChange: (hand: string | null) => void;
+  /**
+   * 切换放大格子的回调（用于关闭 / 切到另一格）。
+   * - 编辑模式下 Shift+左键会带 `editNote: true`，请求 RangeDetail 进入「备注编辑」子模式。
+   */
+  onZoomChange: (hand: string | null, opts?: { editNote?: boolean }) => void;
 }
 
 export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
@@ -44,10 +47,12 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
   } | null>(null);
 
   useEffect(() => {
-    if (editable || !hasActive) {
+    // 没激活范围时，永远关闭放大态。
+    // 编辑模式下也允许放大（Shift+点击进入备注编辑），所以只有 hasActive 缺失时才强关。
+    if (!hasActive) {
       if (zoomedHand !== null) onZoomChange(null);
     }
-  }, [editable, hasActive, zoomedHand, onZoomChange]);
+  }, [hasActive, zoomedHand, onZoomChange]);
 
   useEffect(() => {
     if (zoomedHand === null) return;
@@ -127,6 +132,12 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
       return;
     }
     if (e.button !== 0) return;
+    // Shift + 左键：在编辑模式下打开 RangeDetail 并直接进入「备注编辑」子模式
+    if (e.shiftKey) {
+      e.preventDefault();
+      onZoomChange(hand, { editNote: true });
+      return;
+    }
     // Cmd / Ctrl + 左键：打开多动作占比对话框（不要求一定先选了画笔）
     if (e.metaKey || e.ctrlKey) {
       if (customActions.length === 0) return;
