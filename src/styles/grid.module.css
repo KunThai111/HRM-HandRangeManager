@@ -3,7 +3,8 @@
   flex: 0 1 auto;
   align-self: flex-start;
   width: min(86vh, 100%, 720px);
-  aspect-ratio: 1 / 1;
+  /* 非正方：width 不变，height = width × 0.8 → 每个 cell 宽不变、高压到 0.8 */
+  aspect-ratio: 5 / 4;
   min-height: 0;
 }
 
