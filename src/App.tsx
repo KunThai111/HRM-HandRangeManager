@@ -3,6 +3,7 @@ import { RequireAuth } from './components/RequireAuth';
 import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
+import { ProfitPlansPage } from './pages/ProfitPlansPage';
 import { RangePage } from './pages/RangePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TournamentsPage } from './pages/TournamentsPage';
@@ -16,6 +17,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route index element={<HomePage />} />
             <Route path="tournaments" element={<TournamentsPage />} />
+            <Route path="plans" element={<ProfitPlansPage />} />
             <Route path="range" element={<RangePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

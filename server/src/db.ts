@@ -45,6 +45,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_user_tournaments_user ON user_tournaments(user_id);
 
+  -- 玩家盈利计划。结构与 user_ranges / user_tournaments 同形：行级 LWW + 软删除。
+  CREATE TABLE IF NOT EXISTS user_plans (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan_id    TEXT    NOT NULL,
+    payload    TEXT,
+    updated_at INTEGER NOT NULL,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, plan_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_plans_user ON user_plans(user_id);
+
   -- 玩家偏好（默认深度模板 + 上次打开的范围/深度/座位/对战）。
   -- 整体作为一个 JSON blob 存，按整体的 updated_at 做 LWW。
   CREATE TABLE IF NOT EXISTS user_settings (
@@ -144,6 +155,25 @@ const upsertTournamentStmt = db.prepare(
      deleted    = excluded.deleted`,
 );
 
+const listPlansStmt = db.prepare<[number], SyncItemRow>(
+  `SELECT plan_id AS id, payload, updated_at, deleted
+     FROM user_plans
+     WHERE user_id = ?`,
+);
+
+const getPlanStmt = db.prepare<[number, string], { updated_at: number }>(
+  `SELECT updated_at FROM user_plans WHERE user_id = ? AND plan_id = ?`,
+);
+
+const upsertPlanStmt = db.prepare(
+  `INSERT INTO user_plans (user_id, plan_id, payload, updated_at, deleted)
+     VALUES (@user_id, @id, @payload, @updated_at, @deleted)
+   ON CONFLICT(user_id, plan_id) DO UPDATE SET
+     payload    = excluded.payload,
+     updated_at = excluded.updated_at,
+     deleted    = excluded.deleted`,
+);
+
 const getSettingsStmt = db.prepare<[number], SyncSettingsRow>(
   `SELECT payload, updated_at FROM user_settings WHERE user_id = ?`,
 );
@@ -226,6 +256,17 @@ export function pushTournamentsForUser(
   items: SyncItemInput[],
 ): Record<string, 'applied' | 'skipped'> {
   return applyLww(userId, items, getTournamentStmt, upsertTournamentStmt);
+}
+
+export function listPlansForUser(userId: number): SyncItemRow[] {
+  return listPlansStmt.all(userId);
+}
+
+export function pushPlansForUser(
+  userId: number,
+  items: SyncItemInput[],
+): Record<string, 'applied' | 'skipped'> {
+  return applyLww(userId, items, getPlanStmt, upsertPlanStmt);
 }
 
 export function getSettingsForUser(userId: number): SyncSettingsRow | undefined {

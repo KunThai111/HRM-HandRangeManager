@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ProfitChart } from '@/components/home/ProfitChart';
+import { ProfitPlanCard } from '@/components/home/ProfitPlanCard';
 import { StatCard } from '@/components/home/StatCard';
 import { TournamentList } from '@/components/home/TournamentList';
 import { formatPercent, formatUSD, summarize } from '@/lib/tournaments';
@@ -57,6 +58,8 @@ export function HomePage() {
         )}
 
         {prefs.showProfitChart && <ProfitChart tournaments={tournaments} />}
+
+        <ProfitPlanCard tournaments={tournaments} />
 
         <div className={styles.quickRow}>
           <Link to="/range" className={styles.quickCard}>

@@ -86,13 +86,24 @@ export interface SyncSettingsDTO<T = unknown> {
   updatedAt: number;
 }
 
-export interface SyncPullResponse<R = unknown, T = unknown, S = unknown> {
+export interface SyncPullResponse<
+  R = unknown,
+  T = unknown,
+  S = unknown,
+  P = unknown,
+> {
   ranges: SyncItemDTO<R>[];
   tournaments: SyncItemDTO<T>[];
+  plans: SyncItemDTO<P>[];
   settings: SyncSettingsDTO<S> | null;
 }
 
-export interface SyncPushBody<R = unknown, T = unknown, S = unknown> {
+export interface SyncPushBody<
+  R = unknown,
+  T = unknown,
+  S = unknown,
+  P = unknown,
+> {
   ranges?: Array<{
     id: string;
     updatedAt: number;
@@ -105,12 +116,19 @@ export interface SyncPushBody<R = unknown, T = unknown, S = unknown> {
     deleted?: boolean;
     payload?: T | null;
   }>;
+  plans?: Array<{
+    id: string;
+    updatedAt: number;
+    deleted?: boolean;
+    payload?: P | null;
+  }>;
   settings?: { payload: S; updatedAt: number };
 }
 
 export interface SyncPushResponse {
   ranges: Record<string, 'applied' | 'skipped'>;
   tournaments: Record<string, 'applied' | 'skipped'>;
+  plans: Record<string, 'applied' | 'skipped'>;
   settings: 'applied' | 'skipped' | 'noop';
 }
 
@@ -128,19 +146,23 @@ export const api = {
     const search = next ? `?next=${encodeURIComponent(next)}` : '';
     return `${API_BASE}/auth/google${search}`;
   },
-  syncPull: <R = unknown, T = unknown, S = unknown>() =>
+  syncPull: <R = unknown, T = unknown, S = unknown, P = unknown>() =>
     DEBUG_NO_AUTH
       ? Promise.resolve({
           ranges: [],
           tournaments: [],
+          plans: [],
           settings: null,
-        } as SyncPullResponse<R, T, S>)
-      : request<SyncPullResponse<R, T, S>>('/api/sync/pull'),
-  syncPush: <R = unknown, T = unknown, S = unknown>(body: SyncPushBody<R, T, S>) =>
+        } as SyncPullResponse<R, T, S, P>)
+      : request<SyncPullResponse<R, T, S, P>>('/api/sync/pull'),
+  syncPush: <R = unknown, T = unknown, S = unknown, P = unknown>(
+    body: SyncPushBody<R, T, S, P>,
+  ) =>
     DEBUG_NO_AUTH
       ? Promise.resolve({
           ranges: {},
           tournaments: {},
+          plans: {},
           settings: 'noop',
         } as SyncPushResponse)
       : request<SyncPushResponse>('/api/sync/push', {

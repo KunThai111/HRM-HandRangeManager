@@ -1,6 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { ApiError, api, type SyncPushBody } from './api';
 import {
+  _getProfitPlanSnapshot,
+  _setProfitPlanSnapshot,
+  _subscribeProfitPlanStore,
+} from '@/store/useProfitPlanStore';
+import {
   _getRangePersisted,
   _replaceRangePersisted,
   _subscribeRangeStore,
@@ -12,6 +17,7 @@ import {
 } from '@/store/useTournamentStore';
 import type { PersistedState, RangeDoc } from '@/store/storage';
 import { sanitizeRangeDoc } from '@/store/storage';
+import type { ProfitPlan } from './profitPlans';
 import { isValidSeatId } from './seats';
 import type { Tournament } from './tournaments';
 
@@ -91,6 +97,7 @@ let pushTimer: number | null = null;
 let inflightPush: Promise<void> | null = null;
 let unsubRange: (() => void) | null = null;
 let unsubTour: (() => void) | null = null;
+let unsubPlan: (() => void) | null = null;
 let visListener: (() => void) | null = null;
 let unloadListener: (() => void) | null = null;
 
@@ -152,6 +159,7 @@ export async function enableAutoSync(): Promise<void> {
   // 接好 store 监听（pull 写回时由 applyingRemote 旗标拦截，避免循环）
   unsubRange = _subscribeRangeStore(onStoreChanged);
   unsubTour = _subscribeTournamentStore(onStoreChanged);
+  unsubPlan = _subscribeProfitPlanStore(onStoreChanged);
 
   // 页面隐藏 / 关闭前把 pending 全部冲出去
   visListener = () => {
@@ -180,6 +188,10 @@ export function disableAutoSync(): void {
   if (unsubTour) {
     unsubTour();
     unsubTour = null;
+  }
+  if (unsubPlan) {
+    unsubPlan();
+    unsubPlan = null;
   }
   if (visListener) {
     document.removeEventListener('visibilitychange', visListener);
@@ -221,6 +233,13 @@ interface TourSide {
   payload: Tournament | null;
 }
 
+interface PlanSide {
+  source: 'server' | 'local';
+  updatedAt: number;
+  deleted: boolean;
+  payload: ProfitPlan | null;
+}
+
 function pickRange(prev: RangeSide | undefined, next: RangeSide): RangeSide {
   if (!prev) return next;
   if (next.updatedAt > prev.updatedAt) return next;
@@ -236,11 +255,18 @@ function pickTour(prev: TourSide | undefined, next: TourSide): TourSide {
   return next.source === 'server' ? next : prev;
 }
 
+function pickPlan(prev: PlanSide | undefined, next: PlanSide): PlanSide {
+  if (!prev) return next;
+  if (next.updatedAt > prev.updatedAt) return next;
+  if (next.updatedAt < prev.updatedAt) return prev;
+  return next.source === 'server' ? next : prev;
+}
+
 export async function pullAndMerge(): Promise<void> {
   setState({ status: 'syncing', error: null });
   let pull;
   try {
-    pull = await api.syncPull<RangeDoc, Tournament, SettingsPayload>();
+    pull = await api.syncPull<RangeDoc, Tournament, SettingsPayload, ProfitPlan>();
   } catch (err) {
     handleSyncError(err);
     return;
@@ -358,6 +384,49 @@ export async function pullAndMerge(): Promise<void> {
       }
     }
     _setTournamentSnapshot({ list: nextTourList, tombstones: nextTourTombstones });
+
+    // ---- plans ----
+    const planState = _getProfitPlanSnapshot();
+    const planMerged = new Map<string, PlanSide>();
+
+    for (const item of pull.plans) {
+      planMerged.set(item.id, {
+        source: 'server',
+        updatedAt: item.updatedAt,
+        deleted: item.deleted,
+        payload: item.deleted ? null : (item.payload as ProfitPlan | null),
+      });
+    }
+    for (const p of planState.list) {
+      const cur = planMerged.get(p.id);
+      planMerged.set(
+        p.id,
+        pickPlan(cur, {
+          source: 'local',
+          updatedAt: p.updatedAt,
+          deleted: false,
+          payload: p,
+        }),
+      );
+    }
+    for (const [id, ts] of Object.entries(planState.tombstones)) {
+      const cur = planMerged.get(id);
+      planMerged.set(
+        id,
+        pickPlan(cur, { source: 'local', updatedAt: ts, deleted: true, payload: null }),
+      );
+    }
+
+    const nextPlanList: ProfitPlan[] = [];
+    const nextPlanTombstones: Record<string, number> = {};
+    for (const [id, side] of planMerged) {
+      if (side.deleted || !side.payload) {
+        nextPlanTombstones[id] = side.updatedAt;
+      } else {
+        nextPlanList.push(side.payload);
+      }
+    }
+    _setProfitPlanSnapshot({ list: nextPlanList, tombstones: nextPlanTombstones });
   } finally {
     applyingRemote = false;
   }
@@ -405,11 +474,14 @@ export async function flushPush(): Promise<void> {
   await runPush();
 }
 
-function buildPushBody(threshold: number): SyncPushBody<RangeDoc, Tournament, SettingsPayload> {
+type PushBody = SyncPushBody<RangeDoc, Tournament, SettingsPayload, ProfitPlan>;
+
+function buildPushBody(threshold: number): PushBody {
   const persisted = _getRangePersisted();
   const tour = _getTournamentSnapshot();
+  const plan = _getProfitPlanSnapshot();
 
-  const ranges: SyncPushBody<RangeDoc, Tournament, SettingsPayload>['ranges'] = [];
+  const ranges: PushBody['ranges'] = [];
   for (const r of persisted.ranges) {
     if (r.updatedAt > threshold) {
       ranges.push({ id: r.id, updatedAt: r.updatedAt, deleted: false, payload: r });
@@ -421,7 +493,7 @@ function buildPushBody(threshold: number): SyncPushBody<RangeDoc, Tournament, Se
     }
   }
 
-  const tournaments: SyncPushBody<RangeDoc, Tournament, SettingsPayload>['tournaments'] = [];
+  const tournaments: PushBody['tournaments'] = [];
   for (const t of tour.list) {
     if (t.updatedAt > threshold) {
       tournaments.push({ id: t.id, updatedAt: t.updatedAt, deleted: false, payload: t });
@@ -433,9 +505,22 @@ function buildPushBody(threshold: number): SyncPushBody<RangeDoc, Tournament, Se
     }
   }
 
-  const body: SyncPushBody<RangeDoc, Tournament, SettingsPayload> = {};
+  const plans: PushBody['plans'] = [];
+  for (const p of plan.list) {
+    if (p.updatedAt > threshold) {
+      plans.push({ id: p.id, updatedAt: p.updatedAt, deleted: false, payload: p });
+    }
+  }
+  for (const [id, ts] of Object.entries(plan.tombstones)) {
+    if (ts > threshold) {
+      plans.push({ id, updatedAt: ts, deleted: true });
+    }
+  }
+
+  const body: PushBody = {};
   if (ranges.length) body.ranges = ranges;
   if (tournaments.length) body.tournaments = tournaments;
+  if (plans.length) body.plans = plans;
   if (persisted.settingsUpdatedAt > threshold) {
     body.settings = {
       payload: settingsFromPersisted(persisted),
@@ -445,8 +530,13 @@ function buildPushBody(threshold: number): SyncPushBody<RangeDoc, Tournament, Se
   return body;
 }
 
-function bodyHasContent(body: SyncPushBody): boolean {
-  return !!body.ranges?.length || !!body.tournaments?.length || !!body.settings;
+function bodyHasContent(body: PushBody): boolean {
+  return (
+    !!body.ranges?.length ||
+    !!body.tournaments?.length ||
+    !!body.plans?.length ||
+    !!body.settings
+  );
 }
 
 async function runPush(): Promise<void> {

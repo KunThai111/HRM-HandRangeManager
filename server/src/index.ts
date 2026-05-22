@@ -10,8 +10,10 @@ import { env } from './env.js';
 import { passport } from './auth.js';
 import {
   getSettingsForUser,
+  listPlansForUser,
   listRangesForUser,
   listTournamentsForUser,
+  pushPlansForUser,
   pushRangesForUser,
   pushSettingsForUser,
   pushTournamentsForUser,
@@ -168,11 +170,12 @@ app.get('/api/sync/pull', requireAuth, (req, res) => {
   const userId = (req.user as { id: number }).id;
   const ranges = rowsToWire(listRangesForUser(userId));
   const tournaments = rowsToWire(listTournamentsForUser(userId));
+  const plans = rowsToWire(listPlansForUser(userId));
   const settingsRow = getSettingsForUser(userId);
   const settings = settingsRow
     ? { payload: safeJsonParse(settingsRow.payload), updatedAt: settingsRow.updated_at }
     : null;
-  res.json({ ranges, tournaments, settings });
+  res.json({ ranges, tournaments, plans, settings });
 });
 
 app.post('/api/sync/push', requireAuth, (req, res) => {
@@ -181,6 +184,7 @@ app.post('/api/sync/push', requireAuth, (req, res) => {
 
   const rangesResult = pushRangesForUser(userId, readSyncItems(body.ranges));
   const tournamentsResult = pushTournamentsForUser(userId, readSyncItems(body.tournaments));
+  const plansResult = pushPlansForUser(userId, readSyncItems(body.plans));
 
   let settingsResult: 'applied' | 'skipped' | 'noop' = 'noop';
   const s = body.settings as { payload?: unknown; updatedAt?: number } | undefined;
@@ -191,6 +195,7 @@ app.post('/api/sync/push', requireAuth, (req, res) => {
   res.json({
     ranges: rangesResult,
     tournaments: tournamentsResult,
+    plans: plansResult,
     settings: settingsResult,
   });
 });
