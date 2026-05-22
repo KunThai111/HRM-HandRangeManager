@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import {
   displayDate,
   displayTimestamp,
-  effectiveBounty,
   formatCurrency,
+  formatMoney,
   totalEarning,
   type Tournament,
 } from '@/lib/tournaments';
@@ -14,7 +14,7 @@ import {
   type TournamentDraft,
 } from '@/store/useTournamentStore';
 import home from '@/styles/home.module.css';
-import { getIconSrc } from './IconPicker';
+import { TournamentDetailDialog } from './TournamentDetailDialog';
 import { TournamentDialog } from './TournamentDialog';
 import {
   DEFAULT_FILTER,
@@ -28,17 +28,116 @@ import {
   type SortState,
 } from './TournamentSortMenu';
 
-function formatDateLabel(t: Tournament): string {
+interface IconTagInfo {
+  label: string;
+  className: string;
+}
+
+const ICON_TAG_INFO: Record<string, IconTagInfo> = {
+  master: { label: '大师赛', className: home.iconTagMaster },
+  zodiac: { label: '生肖赛', className: home.iconTagZodiac },
+};
+
+interface DateParts {
+  main: string;
+  year: string;
+}
+
+function formatDateParts(t: Tournament): DateParts {
   const raw = displayDate(t);
   const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
+  if (Number.isNaN(d.getTime())) return { main: raw, year: '' };
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const year = d.getFullYear();
+  const currentYear = new Date().getFullYear();
+  return {
+    main: `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    year: year === currentYear ? '' : String(year),
+  };
+}
+
+type IconProps = React.SVGProps<SVGSVGElement>;
+
+function PeopleIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19v-1A3.5 3.5 0 0 1 7 14.5h4A3.5 3.5 0 0 1 14.5 18v1" />
+      <path d="M15 4.7a3.2 3.2 0 0 1 0 6.1" />
+      <path d="M16.5 14.6A3.5 3.5 0 0 1 19 18v1" />
+    </svg>
+  );
+}
+
+function CoinIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="8.5" />
+      <text
+        x="12"
+        y="12"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize="10"
+        fontWeight="700"
+        fontFamily="system-ui, -apple-system, sans-serif"
+        fill="currentColor"
+        stroke="none"
+      >
+        B
+      </text>
+    </svg>
+  );
+}
+
+function ChairIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M7 4h10v9H7z" />
+      <path d="M5.5 13h13" />
+      <path d="M8 13v7" />
+      <path d="M16 13v7" />
+    </svg>
+  );
 }
 
 type DialogState =
   | { kind: 'closed' }
   | { kind: 'create' }
+  | { kind: 'detail'; id: string }
   | { kind: 'edit'; id: string };
 
 interface TournamentListProps {
@@ -102,6 +201,11 @@ export function TournamentList({
       ? list.find((t) => t.id === dialogState.id)
       : undefined;
 
+  const detailing =
+    dialogState.kind === 'detail'
+      ? list.find((t) => t.id === dialogState.id)
+      : undefined;
+
   const handleSubmit = (draft: TournamentDraft) => {
     if (dialogState.kind === 'edit') {
       tournamentActions.update(dialogState.id, draft);
@@ -111,10 +215,10 @@ export function TournamentList({
     setDialogState({ kind: 'closed' });
   };
 
-  const handleDelete = (e: React.MouseEvent, id: string, name: string) => {
-    e.stopPropagation();
+  const handleDetailDelete = (id: string, name: string) => {
     if (confirm(`确定删除「${name}」吗？`)) {
       tournamentActions.remove(id);
+      setDialogState({ kind: 'closed' });
     }
   };
 
@@ -152,83 +256,76 @@ export function TournamentList({
           </div>
         ) : (
           <table className={home.table}>
-            <thead>
-              <tr>
-                <th className={home.iconCell} aria-label="图标" />
-                <th>名称</th>
-                <th>日期</th>
-                <th className={home.tdNumeric}>总人数</th>
-                <th className={home.tdNumeric}>每桌</th>
-                <th className={home.tdNumeric}>买入</th>
-                <th className={home.tdNumeric}>名次</th>
-                <th className={home.tdNumeric}>奖金</th>
-                <th className={home.tdNumeric}>盈亏</th>
-                <th className={home.tdRowActions} aria-label="操作" />
-              </tr>
-            </thead>
+            <colgroup>
+              <col className={home.colDate} />
+              <col className={home.colInfo} />
+              <col className={home.colProfit} />
+            </colgroup>
             <tbody>
               {visible.map((t) => {
                 const earning = totalEarning(t);
-                const bounty = effectiveBounty(t);
                 const profit = earning - t.buyIn;
+                const hasProfit = profit !== 0;
                 const profitClass =
                   profit > 0
                     ? `${home.profit} ${home.profitPositive}`
                     : profit < 0
                       ? `${home.profit} ${home.profitNegative}`
                       : home.profit;
-                const sign = profit >= 0 ? '+' : '-';
-                const iconSrc = getIconSrc(t.iconId);
+                const sign = profit > 0 ? '+' : '-';
+                const iconTag = ICON_TAG_INFO[t.iconId];
+                const { main: dateMain, year: dateYear } = formatDateParts(t);
                 return (
                   <tr
                     key={t.id}
-                    onClick={() => setDialogState({ kind: 'edit', id: t.id })}
+                    onClick={() => setDialogState({ kind: 'detail', id: t.id })}
                   >
-                    <td className={home.iconCell}>
-                      {iconSrc && (
-                        <img
-                          src={iconSrc}
-                          alt=""
-                          className={`${home.iconCellImg} ${
-                            t.iconId === 'zodiac' ? home.iconCellImgZodiac : ''
-                          }`}
-                        />
+                    <td className={home.dateCell}>
+                      <div className={home.dateMain}>{dateMain}</div>
+                      {dateYear && (
+                        <div className={home.dateYear}>{dateYear}</div>
                       )}
                     </td>
-                    <td>
-                      {t.name}
-                      {t.hasBounty && <span className={home.bountyTag}>赏金</span>}
+                    <td className={home.infoCell}>
+                      <div className={home.infoRow}>
+                        <div className={home.infoMain}>
+                          <div className={home.infoTitle}>
+                            <span className={home.infoName}>{t.name}</span>
+                            {iconTag && (
+                              <span className={iconTag.className}>
+                                {iconTag.label}
+                              </span>
+                            )}
+                            {t.hasBounty && (
+                              <span className={home.bountyTag}>赏金</span>
+                            )}
+                          </div>
+                          <div className={home.infoMeta}>
+                            <span className={home.metaItem}>
+                              <PeopleIcon className={home.metaIcon} />
+                              {t.totalPlayers || '-'}
+                            </span>
+                            <span className={home.metaItem}>
+                              <CoinIcon className={home.metaIcon} />
+                              {t.currency === 'USD'
+                                ? formatMoney(t.buyIn)
+                                : formatCurrency(t.buyIn, t.currency)}
+                            </span>
+                            <span className={home.metaItem}>
+                              <ChairIcon className={home.metaIcon} />
+                              {t.tablePlayers || '-'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                     </td>
-                    <td>{formatDateLabel(t)}</td>
-                    <td className={home.tdNumeric}>{t.totalPlayers || '-'}</td>
-                    <td className={home.tdNumeric}>{t.tablePlayers || '-'}</td>
-                    <td className={home.tdNumeric}>
-                      {formatCurrency(t.buyIn, t.currency)}
-                    </td>
-                    <td className={home.tdNumeric}>
-                      {t.finalRank ? `#${t.finalRank}` : '-'}
-                    </td>
-                    <td className={home.tdNumeric}>
-                      {formatCurrency(t.prize, t.currency)}
-                      {bounty > 0 && (
-                        <span className={home.bountyHint}>
-                          {' + '}
-                          {formatCurrency(bounty, t.currency)}
-                        </span>
+                    <td className={`${home.tdNumeric} ${home.profitCell} ${profitClass}`}>
+                      {hasProfit && (
+                        <>
+                          {sign}
+                          {formatCurrency(Math.abs(profit), t.currency)}
+                        </>
                       )}
-                    </td>
-                    <td className={`${home.tdNumeric} ${profitClass}`}>
-                      {sign}
-                      {formatCurrency(Math.abs(profit), t.currency)}
-                    </td>
-                    <td className={home.tdRowActions}>
-                      <button
-                        type="button"
-                        className={`danger ${home.rowDelete}`}
-                        onClick={(e) => handleDelete(e, t.id, t.name)}
-                      >
-                        删除
-                      </button>
                     </td>
                   </tr>
                 );
@@ -238,7 +335,18 @@ export function TournamentList({
         )}
       </div>
 
-      {dialogState.kind !== 'closed' && (
+      {detailing && (
+        <TournamentDetailDialog
+          tournament={detailing}
+          onClose={() => setDialogState({ kind: 'closed' })}
+          onEdit={() =>
+            setDialogState({ kind: 'edit', id: detailing.id })
+          }
+          onDelete={() => handleDetailDelete(detailing.id, detailing.name)}
+        />
+      )}
+
+      {(dialogState.kind === 'create' || dialogState.kind === 'edit') && (
         <TournamentDialog
           initial={editing}
           onCancel={() => setDialogState({ kind: 'closed' })}

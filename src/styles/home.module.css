@@ -548,7 +548,13 @@
 .table tbody tr {
   cursor: pointer;
   transition: background 0.12s;
-  height: 104px;
+}
+
+.table tbody td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  text-align: right;
+  padding-right: 38px;
 }
 
 .table tbody tr:hover {
@@ -564,29 +570,143 @@
   text-align: right;
 }
 
+.profitCell {
+  padding-right: 0;
+}
+
 .tdRowActions {
   text-align: right;
 }
 
-.iconCell {
-  font-size: 66px;
-  line-height: 1;
-  text-align: center;
-  width: 120px;
-}
-
 .iconCellImg {
-  width: 84px;
-  height: 84px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
-  display: inline-block;
-  vertical-align: middle;
+  display: block;
 }
 
 .iconCellImgZodiac {
-  width: 70px;
-  height: 70px;
-  margin-left: 5px;
+  width: 54px;
+  height: 54px;
+}
+
+/* ===== 列宽：日期 / 信息 / 盈亏 = 1 : 2 : 1 ===== */
+.table {
+  table-layout: fixed;
+}
+
+.colDate {
+  width: 25%;
+}
+
+.colInfo {
+  width: 50%;
+}
+
+.colProfit {
+  width: 25%;
+}
+
+/* ===== 行布局：日期列 ===== */
+.dateCol {
+  text-align: center;
+}
+
+.table td.dateCell {
+  position: relative;
+  text-align: left;
+  vertical-align: middle;
+  padding-left: 38px;
+  color: var(--text-1);
+}
+
+.dateMain {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.dateYear {
+  position: absolute;
+  left: 38px;
+  bottom: 12px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+/* ===== 行布局：信息列 ===== */
+.table td.infoCell {
+  white-space: normal;
+  padding-left: 24px;
+}
+
+.infoRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.infoIcon {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.infoMain {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.infoName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-0);
+  letter-spacing: 0.01em;
+}
+
+.infoMeta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.2;
+}
+
+.metaIcon {
+  flex: 0 0 auto;
+  color: var(--text-2);
 }
 
 .profit {
@@ -601,9 +721,39 @@
   font-size: 10px;
   line-height: 1.4;
   font-weight: 600;
-  color: var(--accent-selected);
-  background: rgba(230, 57, 70, 0.1);
-  border: 1px solid rgba(230, 57, 70, 0.3);
+  color: #d97706;
+  background: rgba(234, 124, 28, 0.12);
+  border: 1px solid rgba(234, 124, 28, 0.35);
+  border-radius: 999px;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+
+.iconTagMaster {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.1);
+  border: 1px solid rgba(14, 116, 144, 0.3);
+  border-radius: 999px;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+
+.iconTagZodiac {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.3);
   border-radius: 999px;
   vertical-align: middle;
   letter-spacing: 0.02em;
@@ -622,16 +772,6 @@
 
 .profitNegative {
   color: var(--danger);
-}
-
-.rowDelete {
-  visibility: hidden;
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-.table tbody tr:hover .rowDelete {
-  visibility: visible;
 }
 
 .empty {
@@ -839,4 +979,225 @@
   .fieldRow {
     grid-template-columns: 1fr;
   }
+}
+
+/* ===== 比赛详情弹窗 ===== */
+.detailDialog {
+  position: relative;
+  max-width: 440px;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.detailClose {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.detailClose:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-0);
+}
+
+.detailHero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 24px 18px;
+  background: linear-gradient(135deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+.detailHeroIcon {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  display: block;
+}
+
+.detailHeroBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detailHeroName {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-0);
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.detailHeroTags {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.detailHeroTags > *:first-child {
+  margin-left: 0;
+}
+
+.detailHeroDate {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.detailProfitCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 24px 18px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border);
+}
+
+.detailProfitLabel {
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.detailProfitValue {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+
+.detailProfitMeta {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.detailProfitPositive .detailProfitValue,
+.detailProfitPositive .detailProfitMeta {
+  color: var(--ok);
+}
+
+.detailProfitNegative .detailProfitValue,
+.detailProfitNegative .detailProfitMeta {
+  color: var(--danger);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  padding: 12px 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 24px;
+  min-width: 0;
+}
+
+.detailItemLabel {
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detailItemValue {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.detailNote {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 24px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.detailNoteLabel {
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detailNoteText {
+  font-size: 13px;
+  color: var(--text-1);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detailFooter {
+  display: flex;
+  gap: 10px;
+  padding: 14px 20px 16px;
+  background: var(--bg-1);
+}
+
+.detailFooterBtn {
+  flex: 1 1 0;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.detailFooter button:global(.danger) {
+  background: transparent;
+  border-color: rgba(217, 55, 74, 0.45);
+  color: var(--danger);
+}
+
+.detailFooter button:global(.danger):hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.detailFooter button:global(.primary) {
+  background: var(--accent-selected);
+  border-color: var(--accent-selected);
+  color: #fff;
+}
+
+.detailFooter button:global(.primary):hover:not(:disabled) {
+  background: #f25563;
+  border-color: #f25563;
 }
