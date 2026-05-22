@@ -268,8 +268,46 @@ function emit() {
   for (const l of listeners) l();
 }
 
+/**
+ * 把当前 draft 的内容合并写回 persisted.ranges[id]，并清除 dirty。
+ * - 仅在 rangeId 存在且 dirty=true 时动作
+ * - 不改动编辑模式状态（editing / editSnapshot 原样保留）
+ * - 返回新的 InternalState；不副作用、不通知监听者
+ */
+function commitDraftToPersisted(s: InternalState): InternalState {
+  if (!s.draft.rangeId || !s.draft.dirty) return s;
+  const base = s.draft;
+  const now = Date.now();
+  const name = base.name.trim() || 'Untitled';
+  const ranges = s.persisted.ranges.map((r) =>
+    r.id === base.rangeId
+      ? {
+          ...r,
+          name,
+          seats: base.seats,
+          depths: base.depths.map(cloneDepth),
+          notes: { ...base.notes },
+          updatedAt: now,
+        }
+      : r,
+  );
+  const draft: DraftState = { ...base, name, dirty: false };
+  return {
+    ...s,
+    draft,
+    persisted: bumpLastOpened(draft, { ...s.persisted, ranges }),
+  };
+}
+
 function setState(updater: (s: InternalState) => InternalState) {
-  state = updater(state);
+  let next = updater(state);
+  // 自动保存：非编辑模式下只要 draft 有改动，立即合并到 persisted。
+  // 编辑模式中的涂色改动不在这里落盘，留到 confirmEdit() 退出编辑后由后续 setState 兜底提交，
+  // 或被 cancelEdit() 回滚后视情况提交（仅当回滚后仍有非涂色 dirty 时）。
+  if (next.draft.rangeId && next.draft.dirty && !next.draft.editing) {
+    next = commitDraftToPersisted(next);
+  }
+  state = next;
   saveState(state.persisted);
   emit();
 }
@@ -830,32 +868,16 @@ export const rangeActions = {
   },
 
   /**
-   * 保存当前 draft（整个 range 的 depths）。若 rangeId 为空则不操作。
+   * 强制把当前 draft 落盘（含编辑模式中的涂色）。
+   * 在自动保存模式下基本无人调用，仅供未来手动保存快捷键 / 极端兜底使用。
+   * 若 rangeId 为空则不操作。
    */
   save() {
     setState((s) => {
       if (!s.draft.rangeId) return s;
-      const base = commitEditing(s.draft);
-      const now = Date.now();
-      const name = base.name.trim() || 'Untitled';
-      const ranges = s.persisted.ranges.map((r) =>
-        r.id === base.rangeId
-          ? {
-              ...r,
-              name,
-              seats: base.seats,
-              depths: base.depths.map(cloneDepth),
-              notes: { ...base.notes },
-              updatedAt: now,
-            }
-          : r,
-      );
-      const draft: DraftState = { ...base, name, dirty: false };
-      return {
-        ...s,
-        draft,
-        persisted: bumpLastOpened(draft, { ...s.persisted, ranges }),
-      };
+      const committed = commitEditing(s.draft);
+      // 强制 dirty=true，让 setState 包装中的 autoCommit 完成落盘
+      return { ...s, draft: { ...committed, dirty: true } };
     });
   },
 

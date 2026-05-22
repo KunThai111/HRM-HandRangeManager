@@ -5,13 +5,9 @@ interface Props {
 }
 
 export function RangeHeader({ onToggleSidebar }: Props) {
-  const { name, dirty, rangeId, currentDepthLabel } = useDraft();
+  const { name, rangeId, currentDepthLabel } = useDraft();
   const noRange = !rangeId;
 
-  const onSave = () => {
-    if (noRange) return;
-    rangeActions.save();
-  };
   const onSaveAs = () => {
     if (noRange) return;
     const v = window.prompt('另存为新范围（连同所有深度子网格一起复制）：', `${name} (copy)`);
@@ -50,11 +46,7 @@ export function RangeHeader({ onToggleSidebar }: Props) {
         onChange={(e) => rangeActions.setName(e.target.value)}
         spellCheck={false}
       />
-      {dirty && <span className="dirty-dot" title="有未保存的改动">●</span>}
       <div style={{ flex: 1 }} />
-      <button className="primary" type="button" onClick={onSave} disabled={noRange || !dirty}>
-        保存
-      </button>
       <button type="button" onClick={onSaveAs} disabled={noRange}>
         另存为
       </button>

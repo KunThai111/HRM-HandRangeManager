@@ -47,6 +47,43 @@
   flex: 1 1 auto;
 }
 
+.settingsBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-1);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.12s;
+}
+
+.settingsBtn:hover {
+  background: var(--bg-3);
+  border-color: var(--border-strong);
+  color: var(--text-0);
+}
+
+.settingsBtn:hover .settingsIcon {
+  transform: rotate(30deg);
+}
+
+.settingsBtnActive,
+.settingsBtnActive:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(217, 55, 74, 0.1);
+}
+
+.settingsIcon {
+  display: block;
+  transition: transform 0.25s ease;
+}
+
 .main {
   flex: 1 1 auto;
   min-height: 0;

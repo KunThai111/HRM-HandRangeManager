@@ -42,7 +42,7 @@ export function Stats() {
               type="button"
               className="primary edit-btn"
               onClick={() => rangeActions.confirmEdit()}
-              title="退出编辑模式，保留涂色（仍需在顶部点保存才会落盘）"
+              title="退出编辑模式并保存涂色"
             >
               ✓ 确定
             </button>

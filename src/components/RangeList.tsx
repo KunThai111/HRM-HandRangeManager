@@ -90,7 +90,7 @@ export function RangeList() {
   const onOpen = (id: string) => {
     if (id === rangeId) return;
     if (dirty) {
-      const ok = window.confirm('当前方案有未保存的改动，切换会丢弃改动，是否继续？');
+      const ok = window.confirm('当前方案正在编辑中，切换会丢弃本次编辑的涂色，是否继续？');
       if (!ok) return;
     }
     rangeActions.openRange(id);
@@ -98,7 +98,7 @@ export function RangeList() {
 
   const onNew = () => {
     if (dirty) {
-      const ok = window.confirm('当前方案有未保存的改动，新建会丢弃改动，是否继续？');
+      const ok = window.confirm('当前方案正在编辑中，新建会丢弃本次编辑的涂色，是否继续？');
       if (!ok) return;
     }
     setCreating(true);

@@ -4,11 +4,13 @@ import { ProfitChart } from '@/components/home/ProfitChart';
 import { StatCard } from '@/components/home/StatCard';
 import { TournamentList } from '@/components/home/TournamentList';
 import { formatPercent, formatUSD, summarize } from '@/lib/tournaments';
+import { usePreferences } from '@/store/usePreferencesStore';
 import { useTournaments } from '@/store/useTournamentStore';
 import styles from '@/styles/home.module.css';
 
 export function HomePage() {
   const tournaments = useTournaments();
+  const prefs = usePreferences();
   const summary = useMemo(() => summarize(tournaments), [tournaments]);
 
   const roiTone =
@@ -23,36 +25,38 @@ export function HomePage() {
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
-        <div className={styles.statGrid}>
-          <StatCard
-            label="总奖金"
-            value={formatUSD(summary.totalPrize)}
-            sub={
-              summary.count > 0
-                ? `平均 ${formatUSD(summary.totalPrize / summary.count)} / 场`
-                : '暂无记录'
-            }
-            tone={profitTone}
-          />
-          <StatCard
-            label="总比赛"
-            value={String(summary.count)}
-            sub={`总买入 ${formatUSD(summary.totalBuyIn)}`}
-          />
-          <StatCard
-            label="ROI"
-            value={formatPercent(summary.roi)}
-            sub={`净盈亏 ${formatUSD(summary.netProfit)}`}
-            tone={roiTone}
-          />
-          <StatCard
-            label="ITM"
-            value={formatPercent(summary.itmRate)}
-            sub={summary.count > 0 ? `进入钱圈 ${summary.itmCount} / ${summary.count}` : '暂无记录'}
-          />
-        </div>
+        {prefs.showTournamentStats && (
+          <div className={styles.statGrid}>
+            <StatCard
+              label="总奖金"
+              value={formatUSD(summary.totalPrize)}
+              sub={
+                summary.count > 0
+                  ? `平均 ${formatUSD(summary.totalPrize / summary.count)} / 场`
+                  : '暂无记录'
+              }
+              tone={profitTone}
+            />
+            <StatCard
+              label="总比赛"
+              value={String(summary.count)}
+              sub={`总买入 ${formatUSD(summary.totalBuyIn)}`}
+            />
+            <StatCard
+              label="ROI"
+              value={formatPercent(summary.roi)}
+              sub={`净盈亏 ${formatUSD(summary.netProfit)}`}
+              tone={roiTone}
+            />
+            <StatCard
+              label="ITM"
+              value={formatPercent(summary.itmRate)}
+              sub={summary.count > 0 ? `进入钱圈 ${summary.itmCount} / ${summary.count}` : '暂无记录'}
+            />
+          </div>
+        )}
 
-        <ProfitChart tournaments={tournaments} />
+        {prefs.showProfitChart && <ProfitChart tournaments={tournaments} />}
 
         <div className={styles.quickRow}>
           <Link to="/range" className={styles.quickCard}>

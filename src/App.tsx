@@ -4,6 +4,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { RangePage } from './pages/RangePage';
+import { SettingsPage } from './pages/SettingsPage';
 import { TournamentsPage } from './pages/TournamentsPage';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
             <Route index element={<HomePage />} />
             <Route path="tournaments" element={<TournamentsPage />} />
             <Route path="range" element={<RangePage />} />
+            <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Route>

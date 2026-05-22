@@ -172,13 +172,20 @@ export function ProfitChart({ tournaments }: Props) {
   const yScale = (y: number) =>
     PAD_T + (1 - (y - yLo) / (yHi - yLo || 1)) * PLOT_H;
 
-  const yZero = yScale(0);
-
   // 折线从 (0, 0) 起点出发，依次连到每场累计点。
-  const linePath = [
-    `M ${xScale(0)} ${yScale(0)}`,
-    ...points.map((p) => `L ${xScale(p.x)} ${yScale(p.y)}`),
-  ].join(' ');
+  // 颜色按「线段末端」的 y 符号决定：末端 ≥ 0 用绿色，< 0 用红色，
+  // 与起点位置无关（即使从负数跨到正数，这一段也算绿色）。
+  const segments = points.map((p, i) => {
+    const prev = i === 0 ? { x: 0, y: 0 } : points[i - 1];
+    return {
+      key: p.id,
+      x1: xScale(prev.x),
+      y1: yScale(prev.y),
+      x2: xScale(p.x),
+      y2: yScale(p.y),
+      stroke: p.y >= 0 ? 'var(--ok)' : 'var(--danger)',
+    };
+  });
 
   const xTicks = buildXTicks(points.length);
 
@@ -198,20 +205,6 @@ export function ProfitChart({ tournaments }: Props) {
           role="img"
           aria-label="盈亏曲线"
         >
-          <defs>
-            <clipPath id="profit-up-clip">
-              <rect x={PAD_L} y={PAD_T} width={PLOT_W} height={Math.max(0, yZero - PAD_T)} />
-            </clipPath>
-            <clipPath id="profit-down-clip">
-              <rect
-                x={PAD_L}
-                y={yZero}
-                width={PLOT_W}
-                height={Math.max(0, PAD_T + PLOT_H - yZero)}
-              />
-            </clipPath>
-          </defs>
-
           {yTicks.map((t) => (
             <g key={`gy-${t}`}>
               {t === 0 && (
@@ -243,26 +236,20 @@ export function ProfitChart({ tournaments }: Props) {
             className={styles.chartZero}
           />
 
-          <path
-            d={linePath}
-            fill="none"
-            stroke="var(--ok)"
-            strokeWidth={3}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-            clipPath="url(#profit-up-clip)"
-          />
-          <path
-            d={linePath}
-            fill="none"
-            stroke="var(--danger)"
-            strokeWidth={3}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-            clipPath="url(#profit-down-clip)"
-          />
+          {segments.map((s) => (
+            <line
+              key={`seg-${s.key}`}
+              x1={s.x1}
+              y1={s.y1}
+              x2={s.x2}
+              y2={s.y2}
+              stroke={s.stroke}
+              strokeWidth={3}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
 
           {points.map((p) => {
             const cx = xScale(p.x);
