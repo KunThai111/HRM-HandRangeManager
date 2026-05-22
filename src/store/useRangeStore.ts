@@ -23,10 +23,29 @@ import {
   loadState,
   makeRange,
   newId,
+  sanitizeRangeDoc,
   saveState,
   type PersistedState,
   type RangeDoc,
 } from './storage';
+
+/** 导出/导入 JSON 文件外层信封，方便未来扩展兼容性。 */
+const EXPORT_TYPE = 'hrm-range';
+const EXPORT_VERSION = 1;
+
+export interface ExportEnvelope {
+  type: typeof EXPORT_TYPE;
+  version: number;
+  exportedAt: number;
+  range: RangeDoc;
+}
+
+export interface ImportResult {
+  ok: boolean;
+  id?: string;
+  name?: string;
+  error?: string;
+}
 
 /**
  * 工作区（draft）：当前选中范围的整套深度副本。
@@ -947,6 +966,92 @@ export const rangeActions = {
       return { ...s, persisted: { ...s.persisted, ranges: [range, ...s.persisted.ranges] } };
     });
     return outId;
+  },
+
+  /**
+   * 把指定 range 序列化为带信封的 JSON 字符串。
+   * - 信封含 type / version / exportedAt，便于以后向后兼容
+   * - 找不到 id 时返回 null
+   */
+  exportRangeToJSON(id: string): { json: string; name: string } | null {
+    const src = state.persisted.ranges.find((r) => r.id === id);
+    if (!src) return null;
+    const envelope: ExportEnvelope = {
+      type: EXPORT_TYPE,
+      version: EXPORT_VERSION,
+      exportedAt: Date.now(),
+      range: {
+        ...src,
+        depths: src.depths.map(cloneDepth),
+        notes: { ...(src.notes ?? {}) },
+      },
+    };
+    return { json: JSON.stringify(envelope, null, 2), name: src.name || 'Untitled' };
+  },
+
+  /**
+   * 从外部 JSON 字符串导入一个 range。
+   * - 同时支持「信封格式」与「裸 RangeDoc」
+   * - 总是分配新的 id（避免覆盖远端同步同 id 数据）
+   * - 若与现有方案重名，自动追加「（导入）」后缀；再撞继续递增编号
+   * - createdAt/updatedAt 使用导入时刻，保证排序在最前 & 触发 sync push
+   * - 不激活；调用方可拿到 id 后再决定是否 openRange
+   */
+  importRangeFromJSON(raw: string): ImportResult {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { ok: false, error: '文件内容不是合法 JSON' };
+    }
+
+    let candidate: unknown = parsed;
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      if (obj.type === EXPORT_TYPE && obj.range) candidate = obj.range;
+    }
+    if (candidate && typeof candidate === 'object') {
+      const obj = { ...(candidate as Record<string, unknown>) };
+      const now = Date.now();
+      if (typeof obj.id !== 'string') obj.id = `imp_${now}`;
+      if (typeof obj.createdAt !== 'number') obj.createdAt = now;
+      if (typeof obj.updatedAt !== 'number') obj.updatedAt = now;
+      candidate = obj;
+    }
+
+    const sanitized = sanitizeRangeDoc(candidate);
+    if (!sanitized) return { ok: false, error: '文件结构不符合 HRM 范围方案格式' };
+
+    let outId = '';
+    let outName = '';
+    setState((s) => {
+      const used = new Set(s.persisted.ranges.map((r) => r.name));
+      const base = (sanitized.name || 'Untitled').trim() || 'Untitled';
+      let name = base;
+      if (used.has(name)) {
+        name = `${base}（导入）`;
+        let i = 2;
+        while (used.has(name)) {
+          name = `${base}（导入 ${i}）`;
+          i++;
+        }
+      }
+      const now = Date.now();
+      const range: RangeDoc = {
+        ...sanitized,
+        id: newId(),
+        name,
+        createdAt: now,
+        updatedAt: now,
+      };
+      outId = range.id;
+      outName = name;
+      return {
+        ...s,
+        persisted: { ...s.persisted, ranges: [range, ...s.persisted.ranges] },
+      };
+    });
+    return { ok: true, id: outId, name: outName };
   },
 
   remove(id: string) {

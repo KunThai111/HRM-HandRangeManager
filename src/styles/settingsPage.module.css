@@ -148,3 +148,69 @@
   outline: 2px solid var(--danger);
   outline-offset: 2px;
 }
+
+/* ===== 「方案数据」区域：导出列表 & 临时提示 ===== */
+.exportList {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 48vh;
+  overflow-y: auto;
+}
+
+.exportItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-radius: var(--radius);
+}
+
+.exportItemText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.exportItemName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exportItemMeta {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.flash {
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.flashOk {
+  color: var(--ok);
+  background: rgba(31, 138, 58, 0.08);
+  border: 1px solid rgba(31, 138, 58, 0.25);
+}
+
+.flashError {
+  color: var(--danger);
+  background: rgba(217, 55, 74, 0.08);
+  border: 1px solid rgba(217, 55, 74, 0.25);
+}
