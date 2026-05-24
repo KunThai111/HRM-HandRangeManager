@@ -13,7 +13,7 @@ interface Props {
   /** 当前被放大查看的 hand（如 `AKs`），由父组件保证非空时才挂载本组件。 */
   hand: string;
   /**
-   * 是否进入「备注编辑」子模式：仅在 `draft.editing && Shift+点击该格子` 时由 RangePage 设为 true。
+   * 是否进入「备注编辑」子模式：仅在 `draft.editing && Alt/Option+点击该格子` 时由 RangePage 设为 true。
    * - true 且 editing → 渲染 textarea（自动 focus）
    * - 否则 → 没备注就不渲染备注栏；有备注就只读展示
    */

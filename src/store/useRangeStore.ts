@@ -1015,6 +1015,34 @@ export const rangeActions = {
   },
 
   /**
+   * 批量给多个 hand 一次性涂上同一动作（用于 Shift+点击的矩形范围涂色）。
+   * - 单次 setState，对大矩形避免 169 次 re-render
+   * - 与 paintCell 语义一致：fold 视为清空、其它动作使用 weight 编码
+   * - hands 为空 / 不在编辑模式 / 没有任何格子真正变化 → 原样返回
+   */
+  paintCells(hands: readonly string[], action: Action, weight: number = 100) {
+    setState((s) => {
+      if (!s.draft.editing) return s;
+      if (hands.length === 0) return s;
+      const isFold = action === 'fold';
+      const nextValue: Action = isFold ? 'fold' : makeCellValue(action, clampWeight(weight));
+      return applyAtCurrentScope(s, ({ cells, customActions }) => {
+        let nextCells: Record<string, Action> | null = null;
+        for (const hand of hands) {
+          const cur = nextCells ?? cells;
+          const prev = cur[hand] ?? 'fold';
+          if (prev === nextValue) continue;
+          if (!nextCells) nextCells = { ...cells };
+          if (isFold) delete nextCells[hand];
+          else nextCells[hand] = nextValue;
+        }
+        if (!nextCells) return { cells, customActions };
+        return { cells: nextCells, customActions };
+      });
+    });
+  },
+
+  /**
    * 把一格设为多个动作的混合占比（如 50% A + 40% B + 10% C）。
    * - `segments` 为空 / 总权重为 0 → 视为 fold（清空该格）
    * - 各段权重在内部夹到 [1,100]，总和 > 100 时从尾部裁剪

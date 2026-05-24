@@ -12,12 +12,12 @@ export function RangePage() {
   // 空字符串 = 未选中任何动作；此时禁止涂色，需用户先在 ActionToolbar 添加自定义按钮
   const [action, setAction] = useState<Action>('');
   /**
-   * 当前被放大查看的 hand（非编辑模式：点击有色格子；编辑模式：Shift+点击任意格子）。
+   * 当前被放大查看的 hand（非编辑模式：点击有色格子；编辑模式：Alt/Option+点击任意格子）。
    * 提升到 App 层是为了让 RangeDetail 也能读到，并据此显示/隐藏。
    */
   const [zoomedHand, setZoomedHand] = useState<string | null>(null);
   /**
-   * 是否处于「备注编辑」子模式。仅当 editing && Shift+click 触发时为 true。
+   * 是否处于「备注编辑」子模式。仅当 editing && Alt/Option+click 触发时为 true。
    * 决定 RangeDetail 中是否显示可编辑 textarea。
    */
   const [editingNote, setEditingNote] = useState(false);

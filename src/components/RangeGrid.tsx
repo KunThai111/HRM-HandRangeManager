@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ALL_HAND_KEYS, RANKS, cellKey } from '@/lib/hands';
+import { ALL_HAND_KEYS, RANKS, cellKey, rectHands } from '@/lib/hands';
 import {
   cellSegments,
   resolveAction,
@@ -22,7 +22,7 @@ interface Props {
   zoomedHand: string | null;
   /**
    * 切换放大格子的回调（用于关闭 / 切到另一格）。
-   * - 编辑模式下 Shift+左键会带 `editNote: true`，请求 RangeDetail 进入「备注编辑」子模式。
+   * - 编辑模式下 Alt/Option+左键会带 `editNote: true`，请求 RangeDetail 进入「备注编辑」子模式。
    */
   onZoomChange: (hand: string | null, opts?: { editNote?: boolean }) => void;
 }
@@ -39,6 +39,12 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     active: false,
     action: null,
   });
+  /**
+   * 编辑模式下 Shift+点击的矩形锚点：上一次普通点击/Shift 点击命中的 hand。
+   * - 普通左键单击 / Shift 左键单击 / 拖拽涂色（在格子间移动）都会刷新它
+   * - 切换 depth / hero / vs / 退出编辑模式时重置为 null
+   */
+  const shiftAnchorRef = useRef<string | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   /** Cmd/Ctrl + 点击触发的多动作占比弹窗：存当前编辑的 hand + 进入时的分段。 */
   const [mixTarget, setMixTarget] = useState<{
@@ -48,11 +54,20 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
 
   useEffect(() => {
     // 没激活范围时，永远关闭放大态。
-    // 编辑模式下也允许放大（Shift+点击进入备注编辑），所以只有 hasActive 缺失时才强关。
+    // 编辑模式下也允许放大（Alt+点击进入备注编辑），所以只有 hasActive 缺失时才强关。
     if (!hasActive) {
       if (zoomedHand !== null) onZoomChange(null);
     }
   }, [hasActive, zoomedHand, onZoomChange]);
+
+  useEffect(() => {
+    shiftAnchorRef.current = null;
+  }, [
+    draft.currentDepthLabel,
+    draft.currentSeatId,
+    draft.currentVsSeatId,
+    draft.editing,
+  ]);
 
   useEffect(() => {
     if (zoomedHand === null) return;
@@ -110,6 +125,20 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     setMixTarget({ hand, initial });
   };
 
+  const applyRect = useCallback(
+    (anchor: string, target: string, action: Action) => {
+      if (!editable) return;
+      if (action !== 'fold') {
+        if (!action) return;
+        if (!customActions.some((c) => c.id === action)) return;
+      }
+      const hands = rectHands(anchor, target);
+      if (hands.length === 0) return;
+      rangeActions.paintCells(hands, action);
+    },
+    [editable, customActions],
+  );
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, hand: string) => {
     if (!editable) {
       if (!hasActive) return;
@@ -129,11 +158,12 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     if (e.button === 2) {
       e.preventDefault();
       apply(hand, 'fold');
+      shiftAnchorRef.current = hand;
       return;
     }
     if (e.button !== 0) return;
-    // Shift + 左键：在编辑模式下打开 RangeDetail 并直接进入「备注编辑」子模式
-    if (e.shiftKey) {
+    // Alt / Option + 左键：在编辑模式下打开 RangeDetail 并直接进入「备注编辑」子模式
+    if (e.altKey) {
       e.preventDefault();
       onZoomChange(hand, { editNote: true });
       return;
@@ -145,17 +175,32 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
       openMixDialog(hand);
       return;
     }
+    // Shift + 左键：以上一次点击的格子为锚点，对矩形区域批量涂色
+    if (e.shiftKey) {
+      e.preventDefault();
+      if (!hasSelectedAction) return;
+      const anchor = shiftAnchorRef.current;
+      if (anchor && anchor !== hand) {
+        applyRect(anchor, hand, currentAction);
+      } else {
+        apply(hand, currentAction);
+      }
+      shiftAnchorRef.current = hand;
+      return;
+    }
     if (!hasSelectedAction) return;
     e.preventDefault();
     paintingRef.current.active = true;
     paintingRef.current.action = currentAction;
     apply(hand, currentAction);
+    shiftAnchorRef.current = hand;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
 
   const onPointerEnter = (hand: string) => {
     if (!paintingRef.current.active || paintingRef.current.action == null) return;
     apply(hand, paintingRef.current.action);
+    shiftAnchorRef.current = hand;
   };
 
   const onTouchMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -164,7 +209,10 @@ export function RangeGrid({ currentAction, zoomedHand, onZoomChange }: Props) {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (!(el instanceof HTMLElement)) return;
     const hand = el.dataset.hand;
-    if (hand) apply(hand, paintingRef.current.action);
+    if (hand) {
+      apply(hand, paintingRef.current.action);
+      shiftAnchorRef.current = hand;
+    }
   };
 
   // 非编辑模式下，若用户已选中一个有效动作 → 进入「筛选/高亮」模式：
