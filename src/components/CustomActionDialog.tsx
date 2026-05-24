@@ -111,7 +111,7 @@ export function CustomActionDialog({
             }}
             spellCheck={false}
             placeholder="如 3-Bet / Limp"
-            maxLength={20}
+            maxLength={40}
           />
         </label>
 
