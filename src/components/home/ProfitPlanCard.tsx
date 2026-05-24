@@ -138,7 +138,10 @@ export function ProfitPlanCard({ tournaments }: Props) {
         tabIndex={plans.length > 1 ? 0 : -1}
       >
         <div className={home.planHeader}>
-          <span className={home.planTitle}>盈利计划</span>
+          <span className={home.planTitle}>
+            盈利计划
+            <SparkleIcon className={home.planTitleSparkle} />
+          </span>
           <div className={home.planMenuWrap} ref={menuWrapRef}>
             <button
               type="button"
@@ -278,57 +281,66 @@ function PlanBody({ plan, tournaments }: PlanBodyProps) {
   const isNegative = achievedUSD < 0;
   const isPositive = achievedUSD > 0;
   const ratioPct = Math.round(ratio * 100);
-  // 进度条仅在 ratio > 0 时填充；负值显示为空
   const barWidth = Math.max(0, Math.min(1, ratio)) * 100;
 
-  const achievedValueClass = isNegative
-    ? home.planAchievedValueNegative
+  const netValueClass = isNegative
+    ? home.planHeroNetValueNegative
     : isPositive
-      ? home.planAchievedValuePositive
+      ? home.planHeroNetValuePositive
       : '';
-  const ratioClass = isNegative
-    ? home.planRatioNegative
+  const ratioLabelClass = isNegative
+    ? home.planBarHeroLabelNegative
     : isPositive
-      ? home.planRatioPositive
+      ? home.planBarHeroLabelPositive
       : '';
 
   const dateRange = `${formatPlanDate(plan.startDate)} – ${formatPlanDate(plan.endDate)}`;
 
   return (
     <div className={home.planBody}>
-      <div className={home.planTargetBlock}>
-        <span className={home.planTargetValue}>{formatUSD(plan.targetUSD)}</span>
-        <span className={home.planAmountDate}>{dateRange}</span>
+      <div className={home.planHero}>
+        <div className={home.planHeroNet}>
+          <span className={home.planHeroNetLabel}>净收益</span>
+          <span className={`${home.planHeroNetValue} ${netValueClass}`}>
+            {formatUSD(achievedUSD)}
+          </span>
+        </div>
+
+        <div className={home.planHeroCenter}>
+          <span className={home.planHeroBadge}>总收益</span>
+          <span className={home.planHeroTarget}>{formatUSD(plan.targetUSD)}</span>
+          <span className={home.planHeroDate}>{dateRange}</span>
+        </div>
       </div>
 
-      <div className={home.planAmounts}>
-        <span className={`${home.planAchievedValue} ${achievedValueClass}`}>
-          {formatUSD(achievedUSD)}
+      <div className={home.planBarRow}>
+        <div className={home.planBarHero} aria-hidden>
+          <div
+            className={`${home.planBarHeroFill} ${isNegative ? home.planBarHeroFillNegative : ''}`}
+            style={{ width: `${isNegative ? 0 : barWidth}%` }}
+          />
+        </div>
+        <span className={`${home.planBarHeroLabel} ${ratioLabelClass}`}>
+          {ratioPct}%
         </span>
-        <span className={`${home.planRatio} ${ratioClass}`}>{ratioPct}%</span>
       </div>
 
-      <div className={home.planBar} aria-hidden>
-        <div
-          className={`${home.planBarFill} ${isNegative ? home.planBarFillNegative : ''}`}
-          style={{ width: `${isNegative ? 0 : barWidth}%` }}
-        />
-      </div>
-
-      <div className={home.planMeta}>
-        <span className={home.metaItem}>
-          <TrophyIcon className={home.metaIcon} />
-          {matchedCount}
-        </span>
-        {state !== 'ended' && (
-          <>
-            <span className={home.planMetaDot}>·</span>
-            <span className={home.metaItem}>
-              <ClockIcon className={home.metaIcon} />
-              {Math.max(0, daysLeft)}
-            </span>
-          </>
-        )}
+      <div className={home.planFooter}>
+        <div className={home.planFooterPill}>
+          <span className={home.planFooterMeta}>
+            <TrophyIcon className={home.planFooterIcon} />
+            {matchedCount}
+          </span>
+          {state !== 'ended' && (
+            <>
+              <span className={home.planFooterDivider} aria-hidden />
+              <span className={home.planFooterMeta}>
+                <ClockIcon className={home.planFooterIcon} />
+                {Math.max(0, daysLeft)}
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       {plan.note && <div className={home.planNote}>{plan.note}</div>}
@@ -346,6 +358,21 @@ function parseLocalDay(dateStr: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   if (!m) return null;
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0).getTime();
+}
+
+function SparkleIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M12 2.5l1.6 6.2a3 3 0 0 0 2.2 2.2L22 12.5l-6.2 1.6a3 3 0 0 0-2.2 2.2L12 22.5l-1.6-6.2a3 3 0 0 0-2.2-2.2L2 12.5l6.2-1.6a3 3 0 0 0 2.2-2.2L12 2.5z" />
+    </svg>
+  );
 }
 
 function KebabIcon() {

@@ -42,38 +42,49 @@
   color: var(--accent);
 }
 
-/* ===== Stat cards 顶部数据卡片（总奖金 / 总比赛 / ROI / ITM） ===== */
+/* ===== Stat cards 顶部数据卡片（总奖金 / 总比赛 / ROI / ITM） =====
+   永远 4 列等分；卡片内部元素用 container query (cqi) 跟随卡片宽度缩放。 */
 .statGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: clamp(6px, 1.2vw, 16px);
 }
 
 .statCard {
-  background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 18px 20px;
+  container-type: inline-size;
+  position: relative;
+  background: linear-gradient(135deg, #f1f7fc 0%, #dce9f3 100%);
+  border: 1px solid #c5dcec;
+  border-radius: clamp(8px, 5cqi, 16px);
+  padding: clamp(8px, 6cqi, 18px) clamp(10px, 7cqi, 20px);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: clamp(2px, 1.5cqi, 6px);
   min-width: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(37, 99, 168, 0.05);
 }
 
 .statLabel {
-  font-size: 12px;
-  color: var(--text-2);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: clamp(9px, 5cqi, 13px);
+  color: #3d6b88;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
 }
 
 .statValue {
-  font-size: 28px;
+  font-size: clamp(14px, 11cqi, 26px);
   font-weight: 700;
   color: var(--text-0);
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  line-height: 1.15;
   word-break: break-all;
+  position: relative;
+  z-index: 1;
+  margin-top: clamp(1px, 1cqi, 2px);
 }
 
 .statValuePositive {
@@ -85,19 +96,74 @@
 }
 
 .statSub {
-  font-size: 12px;
-  color: var(--text-2);
+  font-size: clamp(8px, 4.5cqi, 12px);
+  color: #5e7e95;
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  padding-top: clamp(4px, 3cqi, 8px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statIcon {
+  position: absolute;
+  right: clamp(-4px, -1cqi, -2px);
+  bottom: clamp(-6px, -2cqi, -4px);
+  font-size: clamp(32px, 28cqi, 64px);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  transform: rotate(-8deg);
+  filter: drop-shadow(0 6px 10px rgba(37, 99, 168, 0.18));
+  z-index: 0;
+}
+
+.statIconMoney {
+  position: relative;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+}
+
+.statIconMoney > span {
+  position: absolute;
+  font-size: 0.78em;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.18));
+}
+
+.statIconMoneyBack {
+  left: 0.32em;
+  top: -0.02em;
+  transform: rotate(-14deg);
+  opacity: 0.92;
+}
+
+.statIconMoneyMid {
+  left: 0.12em;
+  top: 0.16em;
+  transform: rotate(4deg);
+}
+
+.statIconMoneyFront {
+  left: -0.05em;
+  top: 0.3em;
+  transform: rotate(18deg);
 }
 
 /* ===== 盈亏曲线 ===== */
 .chartCard {
-  background: var(--bg-1);
-  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #f1f7fc 0%, #dce9f3 100%);
+  border: 1px solid #c5dcec;
   border-radius: var(--radius-lg);
   padding: 18px 20px 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: 0 1px 2px rgba(37, 99, 168, 0.05);
 }
 
 .chartHeader {
@@ -230,16 +296,34 @@
 
 /* ===== 主要盈利计划 ===== */
 .planCard {
-  background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 14px 20px 12px;
+  position: relative;
+  background:
+    radial-gradient(125% 80% at 100% 0%, rgba(184, 213, 255, 0.55) 0%, transparent 55%),
+    radial-gradient(120% 90% at 0% 100%, rgba(255, 196, 220, 0.55) 0%, transparent 55%),
+    linear-gradient(135deg, #c3d0f3 0%, #a999dc 50%, #cfb0e3 100%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 20px;
+  padding: 16px 20px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  box-shadow: 0 8px 24px rgba(108, 99, 184, 0.25);
+  color: #ffffff;
+  overflow: hidden;
+}
+
+.planCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, transparent 35%);
+  pointer-events: none;
 }
 
 .planHeader {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -247,9 +331,19 @@
 }
 
 .planTitle {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--text-0);
+  color: #ffffff;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(74, 61, 138, 0.18);
+}
+
+.planTitleSparkle {
+  color: rgba(255, 255, 255, 0.95);
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.6));
 }
 
 .planAddBtn {
@@ -272,18 +366,100 @@
 }
 
 .planBody {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   min-height: 0;
 }
 
-.planBodyTop {
+.planHero {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: baseline;
-  gap: 12px;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  align-items: center;
+  gap: 14px;
+  min-height: 110px;
+}
+
+.planHeroNet {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 6px rgba(108, 99, 184, 0.12) inset;
+}
+
+.planHeroNetLabel {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  letter-spacing: 0.02em;
+}
+
+.planHeroNetValue {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  text-shadow: 0 1px 2px rgba(74, 61, 138, 0.18);
+}
+
+.planHeroNetValueNegative {
+  color: #ff5e7a;
+  text-shadow: 0 1px 2px rgba(140, 30, 60, 0.18);
+}
+
+.planHeroNetValuePositive {
+  color: #4ade80;
+  text-shadow: 0 1px 2px rgba(30, 80, 50, 0.18);
+}
+
+.planHeroCenter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
   min-width: 0;
+}
+
+.planHeroBadge {
+  display: inline-flex;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ffffff;
+  background: rgba(154, 118, 220, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.planHeroTarget {
+  font-size: 40px;
+  font-weight: 800;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  text-shadow: 0 2px 6px rgba(74, 61, 138, 0.22);
+  word-break: keep-all;
+}
+
+.planHeroDate {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.88);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
 }
 
 .planNameRow {
@@ -381,25 +557,27 @@
 .planMenuBtn {
   appearance: none;
   font: inherit;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
   cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .planMenuBtn:hover,
 .planMenuBtnOpen {
-  background: var(--bg-2);
-  border-color: var(--border);
-  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #ffffff;
 }
 
 .planMenuPopover {
@@ -606,11 +784,128 @@
 }
 
 .planNote {
+  position: relative;
+  z-index: 1;
   font-size: 12px;
-  color: var(--text-2);
+  color: rgba(255, 255, 255, 0.88);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.planBarRow {
+  position: relative;
+  z-index: 1;
+}
+
+.planBarHero {
+  position: relative;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(108, 99, 184, 0.18);
+}
+
+.planBarHeroFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(90deg, #ff5e7a 0%, #ff8aa3 100%);
+  border-radius: 999px;
+  min-width: 16px;
+  transition: width 0.2s ease;
+  box-shadow: 0 0 8px rgba(255, 94, 122, 0.45);
+}
+
+.planBarHeroFill::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  background: #ff5e7a;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  transform: translate(50%, -50%);
+  box-shadow: 0 2px 6px rgba(255, 50, 100, 0.45);
+}
+
+.planBarHeroFillNegative {
+  background: linear-gradient(90deg, #ff5e7a 0%, #ff5e7a 100%);
+  width: 16px !important;
+}
+
+.planBarHeroLabel {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(108, 99, 184, 0.35);
+  pointer-events: none;
+}
+
+.planBarHeroLabelNegative {
+  color: #ff4060;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
+}
+
+.planBarHeroLabelPositive {
+  color: #ffffff;
+}
+
+.planFooter {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.planFooterPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5b4a99;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(108, 99, 184, 0.18);
+  font-variant-numeric: tabular-nums;
+}
+
+.planFooterMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.planFooterIcon {
+  color: #8b7bd9;
+}
+
+.planFooterDivider {
+  width: 1px;
+  height: 12px;
+  background: rgba(91, 74, 153, 0.28);
 }
 
 .planNav {
@@ -619,6 +914,8 @@
   justify-content: center;
   gap: 12px;
   padding-top: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .planNavBtn {
@@ -630,9 +927,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-1);
-  background: var(--bg-2);
-  border: 1px solid var(--border);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 50%;
   cursor: pointer;
   font-size: 13px;
@@ -641,9 +938,9 @@
 }
 
 .planNavBtn:hover:not(:disabled) {
-  background: var(--bg-3);
-  border-color: var(--border-strong);
-  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #ffffff;
 }
 
 .planNavBtn:disabled {
@@ -662,7 +959,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--bg-3);
+  background: rgba(255, 255, 255, 0.45);
   border: none;
   padding: 0;
   cursor: pointer;
@@ -670,16 +967,19 @@
 }
 
 .planDot:hover {
-  background: var(--border-strong);
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .planDotActive,
 .planDotActive:hover {
-  background: var(--accent-selected);
+  background: #ffffff;
   transform: scale(1.15);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
 }
 
 .planEmpty {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -691,7 +991,7 @@
 
 .planEmptyText {
   font-size: 13px;
-  color: var(--text-2);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .planEmptyBtn {
@@ -699,18 +999,21 @@
   font: inherit;
   font-size: 13px;
   padding: 8px 16px;
-  color: #fff;
-  background: var(--accent-selected);
-  border: 1px solid var(--accent-selected);
-  border-radius: var(--radius);
+  color: #5b4a99;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 2px 6px var(--accent-selected-shadow);
-  transition: background 0.12s, border-color 0.12s;
+  box-shadow: 0 2px 8px rgba(108, 99, 184, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-weight: 600;
+  transition: background 0.12s, transform 0.12s;
 }
 
 .planEmptyBtn:hover {
-  background: #f25563;
-  border-color: #f25563;
+  background: #ffffff;
+  transform: translateY(-1px);
 }
 
 /* ===== 盈利计划详情页：列表项 ===== */
@@ -836,17 +1139,18 @@
   align-items: center;
   gap: 16px;
   padding: 18px 20px;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #f1f7fc 0%, #dce9f3 100%);
+  border: 1px solid #c5dcec;
   border-radius: var(--radius-lg);
   color: var(--text-0);
   text-decoration: none;
+  box-shadow: 0 1px 2px rgba(37, 99, 168, 0.05);
   transition: border-color 0.12s, background 0.12s, transform 0.12s;
 }
 
 .quickCard:hover {
   border-color: var(--accent-selected);
-  background: var(--bg-2);
+  background: linear-gradient(135deg, #e8f1f9 0%, #cde0ee 100%);
 }
 
 .quickIcon {
@@ -1550,18 +1854,6 @@
   object-fit: contain;
   display: block;
   pointer-events: none;
-}
-
-@media (max-width: 960px) {
-  .statGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 480px) {
-  .statGrid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {

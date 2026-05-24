@@ -37,22 +37,32 @@ export function HomePage() {
                   : '暂无记录'
               }
               tone={profitTone}
+              icon={
+                <span className={styles.statIconMoney}>
+                  <span className={styles.statIconMoneyBack}>💵</span>
+                  <span className={styles.statIconMoneyMid}>💵</span>
+                  <span className={styles.statIconMoneyFront}>💵</span>
+                </span>
+              }
             />
             <StatCard
               label="总比赛"
               value={String(summary.count)}
               sub={`总买入 ${formatUSD(summary.totalBuyIn)}`}
+              icon="🏆"
             />
             <StatCard
               label="ROI"
               value={formatPercent(summary.roi)}
               sub={`净盈亏 ${formatUSD(summary.netProfit)}`}
               tone={roiTone}
+              icon={summary.roi >= 0 ? '📈' : '📉'}
             />
             <StatCard
               label="ITM"
               value={formatPercent(summary.itmRate)}
               sub={summary.count > 0 ? `进入钱圈 ${summary.itmCount} / ${summary.count}` : '暂无记录'}
+              icon="🎯"
             />
           </div>
         )}
