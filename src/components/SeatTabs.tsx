@@ -164,6 +164,21 @@ function VsSeatTabs({
     [others, activeVsSeats],
   );
 
+  // RFI 是否有任何非 fold 标记（用来判断"未设置"状态）
+  const rfiHasMarks = useMemo(
+    () => countNonFold(getCellsForSeat(depth, heroSeatId)) > 0,
+    [depth, heroSeatId],
+  );
+  // 非编辑模式下：RFI 未设置 + 已添加其他对战座位 → 隐藏 RFI 按钮
+  const hideRfi = !editing && !rfiHasMarks && activeVsSeats.length > 0;
+
+  // RFI 被隐藏但当前正在 RFI 视图 → 自动切到第一个对战座位，避免无选中态
+  useEffect(() => {
+    if (hideRfi && currentVsSeatId === null && activeVsSeats.length > 0) {
+      rangeActions.switchVsSeat(activeVsSeats[0]);
+    }
+  }, [hideRfi, currentVsSeatId, activeVsSeats]);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -217,16 +232,18 @@ function VsSeatTabs({
   return (
     <div className={styles.row} role="tablist" aria-label="对战座位">
       <div className={styles.vsTabs}>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={rfiActive}
-          className={`${styles.vsTab} ${styles.vsRfi} ${rfiActive ? styles.active : ''}`}
-          title="默认/开池范围（无对战）"
-          onClick={onClickRfi}
-        >
-          RFI
-        </button>
+        {!hideRfi && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={rfiActive}
+            className={`${styles.vsTab} ${styles.vsRfi} ${rfiActive ? styles.active : ''}`}
+            title="默认/开池范围（无对战）"
+            onClick={onClickRfi}
+          >
+            RFI
+          </button>
+        )}
         {activeVsSeats.map((vsId) => {
           const active = vsId === currentVsSeatId;
           const independent = isVsSeatIndependent(depth, heroSeatId, vsId);
