@@ -12,11 +12,16 @@ import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
   type SeatOverride,
+  type VersusGroup,
+  emptyVersusGroup,
   getCellsForSeat,
+  getCellsForVs,
   getCustomActionsForSeat,
+  getCustomActionsForVs,
   seatScope,
+  vsSeatScope,
 } from '@/lib/depths';
-import { seatsForCount, type SeatId } from '@/lib/seats';
+import { getOtherSeats, seatsForCount, type SeatId } from '@/lib/seats';
 import {
   clampSeats,
   DEFAULT_SEATS,
@@ -70,11 +75,18 @@ export interface ImportResult {
 export interface EditSnapshot {
   depthLabel: string;
   seatId: string;
-  /** 进入编辑时该座位是否已经独立。true → 编辑目标是 override；cancel 写回 override。 */
+  /**
+   * 进入编辑时的对战座位（vs_seat）：
+   * - null → 编辑目标是 depth 主体（默认/RFI 视图），wasIndependent/wasPrimary 等指向 hero 维度。
+   * - 非 null → 编辑目标是 depth.versus[seatId] 内部的某个对战表，
+   *   wasIndependent/wasPrimary 等指向「该 vs 在群组内的 shared/follower/override 状态」。
+   */
+  vsSeatId: string | null;
+  /** 进入编辑时该（hero or vs）座位是否已经独立。true → 编辑目标是 override；cancel 写回 override。 */
   wasIndependent: boolean;
-  /** 进入编辑时该座位是否是 depth 的 primary。 */
+  /** 进入编辑时该座位是否是 primary（hero 维度看 depth.primarySeatId；vs 维度看群组的 primaryVsSeatId）。 */
   wasPrimary: boolean;
-  /** 进入编辑时 depth.primarySeatId 是否还是 null（首次编辑）。 */
+  /** 进入编辑时 primary 是否还是 null（首次编辑）。 */
   primaryWasNull: boolean;
   /** 进入编辑时该座位「看得见」的 cells 副本（独立 → override.cells；否则 → sharedCells）。 */
   cellsBefore: Record<string, Action>;
@@ -89,11 +101,18 @@ export interface DraftState {
   depths: DepthGrid[];
   /**
    * 单格备注：key = hand id（如 `AKs`），value = 用户输入的文字。
-   * 按 range 维度共用，不区分深度/座位。
+   * 按 range 维度共用，不区分深度/座位/对战。
    */
   notes: Record<string, string>;
   currentDepthLabel: string | null;
   currentSeatId: string | null;
+  /**
+   * 当前查看的对战座位（vs_seat）：
+   * - null → 默认/RFI 视图（看 depth 主体）
+   * - 非 null → 看 depth.versus[currentSeatId].vsSharedCells / vsSeatOverrides[currentVsSeatId]
+   * 切换 hero_seat 或 depth 时若 vs 不再合法（不在 activeVsSeats），会自动回退到 null。
+   */
+  currentVsSeatId: string | null;
   dirty: boolean;
   editing: boolean;
   editSnapshot: EditSnapshot | null;
@@ -112,6 +131,7 @@ const EMPTY_DRAFT: DraftState = {
   notes: {},
   currentDepthLabel: null,
   currentSeatId: null,
+  currentVsSeatId: null,
   dirty: false,
   editing: false,
   editSnapshot: null,
@@ -137,6 +157,7 @@ function draftFromRange(
   range: RangeDoc,
   preferLabel: string | null,
   preferSeatId: string | null,
+  preferVsSeatId: string | null,
 ): DraftState {
   const depths = range.depths.map(cloneDepth);
   const label =
@@ -145,6 +166,14 @@ function draftFromRange(
       : depths[0]?.label ?? null;
   const seatsCount = clampSeats(range.seats);
   const seatId = pickInitialSeat(seatsCount, preferSeatId);
+  let vsSeatId: string | null = null;
+  if (preferVsSeatId && label) {
+    const depth = depths.find((d) => d.label === label);
+    const group = depth?.versus?.[seatId];
+    if (group?.activeVsSeats.includes(preferVsSeatId)) {
+      vsSeatId = preferVsSeatId;
+    }
+  }
   return {
     rangeId: range.id,
     name: range.name,
@@ -153,6 +182,7 @@ function draftFromRange(
     notes: { ...(range.notes ?? {}) },
     currentDepthLabel: label,
     currentSeatId: seatId,
+    currentVsSeatId: vsSeatId,
     dirty: false,
     editing: false,
     editSnapshot: null,
@@ -174,14 +204,35 @@ function cloneSeatOverrides(
   return out;
 }
 
-function cloneDepth(d: DepthGrid): DepthGrid {
+function cloneVersusGroup(g: VersusGroup): VersusGroup {
   return {
+    activeVsSeats: [...g.activeVsSeats],
+    vsSharedCells: { ...g.vsSharedCells },
+    vsSharedCustomActions: g.vsSharedCustomActions.map((c) => ({ ...c })),
+    vsSeatOverrides: cloneSeatOverrides(g.vsSeatOverrides),
+    primaryVsSeatId: g.primaryVsSeatId,
+  };
+}
+
+function cloneVersus(
+  v?: Record<string, VersusGroup>,
+): Record<string, VersusGroup> | undefined {
+  if (!v) return undefined;
+  const out: Record<string, VersusGroup> = {};
+  for (const [k, g] of Object.entries(v)) out[k] = cloneVersusGroup(g);
+  return out;
+}
+
+function cloneDepth(d: DepthGrid): DepthGrid {
+  const next: DepthGrid = {
     label: d.label,
     sharedCells: { ...d.sharedCells },
     sharedCustomActions: d.sharedCustomActions.map((c) => ({ ...c })),
     seatOverrides: cloneSeatOverrides(d.seatOverrides),
     primarySeatId: d.primarySeatId,
   };
+  if (d.versus) next.versus = cloneVersus(d.versus);
+  return next;
 }
 
 function cellsEqual(a: Record<string, Action>, b: Record<string, Action>): boolean {
@@ -229,12 +280,41 @@ function overridesEqual(
   return true;
 }
 
+function versusGroupEqual(a: VersusGroup, b: VersusGroup): boolean {
+  if (a.primaryVsSeatId !== b.primaryVsSeatId) return false;
+  if (a.activeVsSeats.length !== b.activeVsSeats.length) return false;
+  for (let i = 0; i < a.activeVsSeats.length; i++) {
+    if (a.activeVsSeats[i] !== b.activeVsSeats[i]) return false;
+  }
+  if (!cellsEqual(a.vsSharedCells, b.vsSharedCells)) return false;
+  if (!customActionsEqual(a.vsSharedCustomActions, b.vsSharedCustomActions)) return false;
+  if (!overridesEqual(a.vsSeatOverrides, b.vsSeatOverrides)) return false;
+  return true;
+}
+
+function versusEqual(
+  a: Record<string, VersusGroup> | undefined,
+  b: Record<string, VersusGroup> | undefined,
+): boolean {
+  const ka = a ? Object.keys(a) : [];
+  const kb = b ? Object.keys(b) : [];
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    const av = (a as Record<string, VersusGroup>)[k];
+    const bv = b?.[k];
+    if (!bv) return false;
+    if (!versusGroupEqual(av, bv)) return false;
+  }
+  return true;
+}
+
 function depthEqual(a: DepthGrid, b: DepthGrid): boolean {
   if (a.label !== b.label) return false;
   if (a.primarySeatId !== b.primarySeatId) return false;
   if (!cellsEqual(a.sharedCells, b.sharedCells)) return false;
   if (!customActionsEqual(a.sharedCustomActions, b.sharedCustomActions)) return false;
   if (!overridesEqual(a.seatOverrides, b.seatOverrides)) return false;
+  if (!versusEqual(a.versus, b.versus)) return false;
   return true;
 }
 
@@ -275,6 +355,7 @@ function buildInitialState(): InternalState {
         target,
         persisted.lastOpenedDepthLabel,
         persisted.lastOpenedSeatId,
+        persisted.lastOpenedVsSeatId,
       )
     : { ...EMPTY_DRAFT };
   return { persisted, draft };
@@ -372,6 +453,7 @@ export function _replaceRangePersisted(next: PersistedState): void {
         target,
         draft.currentDepthLabel,
         draft.currentSeatId,
+        draft.currentVsSeatId,
       ),
     };
   })();
@@ -415,18 +497,24 @@ function getCurrentDepth(draft: DraftState): DepthGrid | undefined {
   return draft.depths.find((d) => d.label === draft.currentDepthLabel);
 }
 
-/** 取当前 (depth, seat) 应渲染的 cells。 */
+/** 取当前 (depth, seat, vs?) 应渲染的 cells。 */
 export function getCurrentCells(draft: DraftState): Record<string, Action> {
   const depth = getCurrentDepth(draft);
   if (!depth || !draft.currentSeatId) return EMPTY_CELLS;
-  return getCellsForSeat(depth, draft.currentSeatId);
+  if (draft.currentVsSeatId === null) {
+    return getCellsForSeat(depth, draft.currentSeatId);
+  }
+  return getCellsForVs(depth, draft.currentSeatId, draft.currentVsSeatId);
 }
 
-/** 取当前 (depth, seat) 应渲染的 customActions。 */
+/** 取当前 (depth, seat, vs?) 应渲染的 customActions。 */
 export function getCurrentCustomActions(draft: DraftState): CustomAction[] {
   const depth = getCurrentDepth(draft);
   if (!depth || !draft.currentSeatId) return EMPTY_CUSTOM_ACTIONS as CustomAction[];
-  return getCustomActionsForSeat(depth, draft.currentSeatId);
+  if (draft.currentVsSeatId === null) {
+    return getCustomActionsForSeat(depth, draft.currentSeatId);
+  }
+  return getCustomActionsForVs(depth, draft.currentSeatId, draft.currentVsSeatId);
 }
 
 /** 兼容旧引用名。 */
@@ -550,14 +638,138 @@ function applyToSeatScope(
   return { ...s, draft: { ...draft, depths, dirty: true } };
 }
 
-/** 通用：写一格 cells（fold = 删除条目）。基于 applyToSeatScope。 */
+/**
+ * applyToSeatScope 的 vs 维度对偶版：
+ * 在当前激活 (depth, hero_seat, vs_seat) 上执行写入，作用域判定参照 vsSeatScope（shared/override/follower）。
+ *
+ * 不变式：
+ * - 必须 currentVsSeatId !== null；否则 caller 应走 applyToSeatScope。
+ * - vs 必须是 hero 之外的合法座位；否则视为非法不写入。
+ * - vs 必须已在 versus[hero].activeVsSeats 内（即用户已显式 addVsSeat）；否则不写入。
+ *   这条规则确保「未被用户激活的对战表不会被静默创建」。
+ */
+function applyToVsSeatScope(
+  s: InternalState,
+  mutator: (input: {
+    cells: Record<string, Action>;
+    customActions: CustomAction[];
+    /** 'shared' = 当前正在写 vsSharedCells；'override' = 当前正在写 vsSeatOverrides。 */
+    scope: 'shared' | 'override';
+  }) => { cells: Record<string, Action>; customActions: CustomAction[] },
+): InternalState {
+  const draft = s.draft;
+  if (!draft.currentDepthLabel || !draft.currentSeatId) return s;
+  const vsSeatId = draft.currentVsSeatId;
+  if (vsSeatId === null) return s;
+  const heroSeatId = draft.currentSeatId;
+  if (!(getOtherSeats(draft.seats, heroSeatId) as string[]).includes(vsSeatId)) {
+    return s;
+  }
+  const dIdx = draft.depths.findIndex((d) => d.label === draft.currentDepthLabel);
+  if (dIdx < 0) return s;
+  const depth = draft.depths[dIdx];
+  const versus = depth.versus ?? {};
+  const group = versus[heroSeatId];
+  if (!group || !group.activeVsSeats.includes(vsSeatId)) return s;
+
+  const scope = vsSeatScope(depth, heroSeatId, vsSeatId);
+  let nextGroup: VersusGroup;
+  if (scope === 'override') {
+    const cur = group.vsSeatOverrides[vsSeatId];
+    const out = mutator({
+      cells: cur.cells,
+      customActions: cur.customActions,
+      scope: 'override',
+    });
+    if (
+      cellsEqual(out.cells, cur.cells) &&
+      customActionsEqual(out.customActions, cur.customActions)
+    ) {
+      return s;
+    }
+    nextGroup = {
+      ...group,
+      vsSeatOverrides: {
+        ...group.vsSeatOverrides,
+        [vsSeatId]: { cells: out.cells, customActions: out.customActions },
+      },
+    };
+  } else if (scope === 'shared') {
+    const out = mutator({
+      cells: group.vsSharedCells,
+      customActions: group.vsSharedCustomActions,
+      scope: 'shared',
+    });
+    if (
+      cellsEqual(out.cells, group.vsSharedCells) &&
+      customActionsEqual(out.customActions, group.vsSharedCustomActions)
+    ) {
+      return s;
+    }
+    nextGroup = {
+      ...group,
+      vsSharedCells: out.cells,
+      vsSharedCustomActions: out.customActions,
+      primaryVsSeatId: group.primaryVsSeatId ?? vsSeatId,
+    };
+  } else {
+    // follower：COW vsShared → vsSeatOverrides
+    const baseCells = { ...group.vsSharedCells };
+    const baseActions = group.vsSharedCustomActions.map((c) => ({ ...c }));
+    const out = mutator({
+      cells: baseCells,
+      customActions: baseActions,
+      scope: 'override',
+    });
+    if (
+      cellsEqual(out.cells, group.vsSharedCells) &&
+      customActionsEqual(out.customActions, group.vsSharedCustomActions)
+    ) {
+      return s;
+    }
+    nextGroup = {
+      ...group,
+      vsSeatOverrides: {
+        ...group.vsSeatOverrides,
+        [vsSeatId]: { cells: out.cells, customActions: out.customActions },
+      },
+    };
+  }
+
+  const depths = draft.depths.slice();
+  depths[dIdx] = {
+    ...depth,
+    versus: { ...versus, [heroSeatId]: nextGroup },
+  };
+  return { ...s, draft: { ...draft, depths, dirty: true } };
+}
+
+/**
+ * 当前作用域写入的统一入口：按 currentVsSeatId 分发到 hero / vs 维度。
+ * 所有涂色 / customAction 操作都应走这个入口，而不是直接调用底下两个。
+ */
+function applyAtCurrentScope(
+  s: InternalState,
+  mutator: (input: {
+    cells: Record<string, Action>;
+    customActions: CustomAction[];
+    scope: 'shared' | 'override';
+  }) => { cells: Record<string, Action>; customActions: CustomAction[] },
+): InternalState {
+  if (s.draft.currentVsSeatId === null) {
+    return applyToSeatScope(s, mutator);
+  }
+  return applyToVsSeatScope(s, mutator);
+}
+
+/** 通用：写一格 cells（fold = 删除条目）。基于 applyAtCurrentScope。 */
 function writeCell(
   s: InternalState,
   hand: string,
   isFold: boolean,
   value: Action,
 ): InternalState {
-  return applyToSeatScope(s, ({ cells, customActions }) => {
+  return applyAtCurrentScope(s, ({ cells, customActions }) => {
     const prev = cells[hand] ?? 'fold';
     const nextValue = isFold ? 'fold' : value;
     if (prev === nextValue) return { cells, customActions };
@@ -574,11 +786,13 @@ function bumpLastOpened(draft: DraftState, persisted: PersistedState): Persisted
     lastOpenedRangeId: draft.rangeId,
     lastOpenedDepthLabel: draft.currentDepthLabel,
     lastOpenedSeatId: draft.currentSeatId,
+    lastOpenedVsSeatId: draft.currentVsSeatId,
   };
   if (
     next.lastOpenedRangeId !== persisted.lastOpenedRangeId ||
     next.lastOpenedDepthLabel !== persisted.lastOpenedDepthLabel ||
-    next.lastOpenedSeatId !== persisted.lastOpenedSeatId
+    next.lastOpenedSeatId !== persisted.lastOpenedSeatId ||
+    next.lastOpenedVsSeatId !== persisted.lastOpenedVsSeatId
   ) {
     next.settingsUpdatedAt = Date.now();
   }
@@ -586,6 +800,61 @@ function bumpLastOpened(draft: DraftState, persisted: PersistedState): Persisted
 }
 
 // -------------------- 编辑模式辅助 --------------------
+
+/**
+ * 给定一个 depth + (hero seat, vs seat) 目标，构造对应的 EditSnapshot。
+ * - vsSeatId=null → hero 维度（默认/RFI 表）
+ * - vsSeatId 非 null → 必须已存在于 versus[seatId].activeVsSeats，否则返回 null
+ * 不会修改任何状态，仅读取当前 depth 的 shared/override 配置。
+ */
+function takeEditSnapshot(
+  depth: DepthGrid,
+  seatId: string,
+  vsSeatId: string | null,
+): EditSnapshot | null {
+  let wasIndependent: boolean;
+  let wasPrimary: boolean;
+  let primaryWasNull: boolean;
+  let cellsBefore: Record<string, Action>;
+  let customActionsBefore: CustomAction[];
+
+  if (vsSeatId === null) {
+    const scope = seatScope(depth, seatId);
+    wasIndependent = scope === 'override';
+    wasPrimary = !wasIndependent && depth.primarySeatId === seatId;
+    primaryWasNull = !wasIndependent && depth.primarySeatId == null;
+    cellsBefore = wasIndependent
+      ? { ...depth.seatOverrides[seatId].cells }
+      : { ...depth.sharedCells };
+    customActionsBefore = wasIndependent
+      ? depth.seatOverrides[seatId].customActions.map((c) => ({ ...c }))
+      : depth.sharedCustomActions.map((c) => ({ ...c }));
+  } else {
+    const group = depth.versus?.[seatId];
+    if (!group || !group.activeVsSeats.includes(vsSeatId)) return null;
+    const scope = vsSeatScope(depth, seatId, vsSeatId);
+    wasIndependent = scope === 'override';
+    wasPrimary = !wasIndependent && group.primaryVsSeatId === vsSeatId;
+    primaryWasNull = !wasIndependent && group.primaryVsSeatId == null;
+    cellsBefore = wasIndependent
+      ? { ...group.vsSeatOverrides[vsSeatId].cells }
+      : { ...group.vsSharedCells };
+    customActionsBefore = wasIndependent
+      ? group.vsSeatOverrides[vsSeatId].customActions.map((c) => ({ ...c }))
+      : group.vsSharedCustomActions.map((c) => ({ ...c }));
+  }
+
+  return {
+    depthLabel: depth.label,
+    seatId,
+    vsSeatId,
+    wasIndependent,
+    wasPrimary,
+    primaryWasNull,
+    cellsBefore,
+    customActionsBefore,
+  };
+}
 
 /**
  * 把编辑模式的 snapshot 应用回当前 (depth, seat) 的 cells / customActions，并清除 editing/editSnapshot。
@@ -601,34 +870,79 @@ function rollbackEditing(draft: DraftState, persisted: PersistedState): DraftSta
     if (dIdx >= 0) {
       const depth = depths[dIdx];
       let nextDepth: DepthGrid;
-      if (snap.wasIndependent) {
-        // 写回该座位的 override
-        nextDepth = {
-          ...depth,
-          seatOverrides: {
-            ...depth.seatOverrides,
-            [snap.seatId]: {
-              cells: { ...snap.cellsBefore },
-              customActions: snap.customActionsBefore.map((c) => ({ ...c })),
+      if (snap.vsSeatId === null) {
+        // —— hero 维度回滚（编辑的是 depth 主体 / 默认表） ——
+        if (snap.wasIndependent) {
+          nextDepth = {
+            ...depth,
+            seatOverrides: {
+              ...depth.seatOverrides,
+              [snap.seatId]: {
+                cells: { ...snap.cellsBefore },
+                customActions: snap.customActionsBefore.map((c) => ({ ...c })),
+              },
             },
-          },
-        };
-      } else if (snap.wasPrimary || snap.primaryWasNull) {
-        // 写回 shared；若编辑前 primary 是 null，把它恢复为 null
-        nextDepth = {
-          ...depth,
-          sharedCells: { ...snap.cellsBefore },
-          sharedCustomActions: snap.customActionsBefore.map((c) => ({ ...c })),
-          primarySeatId: snap.primaryWasNull ? null : depth.primarySeatId,
-        };
-      } else {
-        // follower：编辑期间可能 COW 出了 override，cancel 时删掉它
-        if (Object.prototype.hasOwnProperty.call(depth.seatOverrides, snap.seatId)) {
-          const seatOverrides = { ...depth.seatOverrides };
-          delete seatOverrides[snap.seatId];
-          nextDepth = { ...depth, seatOverrides };
+          };
+        } else if (snap.wasPrimary || snap.primaryWasNull) {
+          nextDepth = {
+            ...depth,
+            sharedCells: { ...snap.cellsBefore },
+            sharedCustomActions: snap.customActionsBefore.map((c) => ({ ...c })),
+            primarySeatId: snap.primaryWasNull ? null : depth.primarySeatId,
+          };
         } else {
+          if (Object.prototype.hasOwnProperty.call(depth.seatOverrides, snap.seatId)) {
+            const seatOverrides = { ...depth.seatOverrides };
+            delete seatOverrides[snap.seatId];
+            nextDepth = { ...depth, seatOverrides };
+          } else {
+            nextDepth = depth;
+          }
+        }
+      } else {
+        // —— vs 维度回滚（编辑的是 depth.versus[seatId] 内某个 vs 表） ——
+        const heroSeatId = snap.seatId;
+        const vsSeatId = snap.vsSeatId;
+        const versus = depth.versus;
+        const group = versus?.[heroSeatId];
+        if (!versus || !group) {
+          // 群组在编辑期间被移除（理论上不应发生，因为 removeVsSeat 也只在 editing 下做且我们这就在编辑），保守返回原 depth
           nextDepth = depth;
+        } else {
+          let nextGroup: VersusGroup;
+          if (snap.wasIndependent) {
+            nextGroup = {
+              ...group,
+              vsSeatOverrides: {
+                ...group.vsSeatOverrides,
+                [vsSeatId]: {
+                  cells: { ...snap.cellsBefore },
+                  customActions: snap.customActionsBefore.map((c) => ({ ...c })),
+                },
+              },
+            };
+          } else if (snap.wasPrimary || snap.primaryWasNull) {
+            nextGroup = {
+              ...group,
+              vsSharedCells: { ...snap.cellsBefore },
+              vsSharedCustomActions: snap.customActionsBefore.map((c) => ({ ...c })),
+              primaryVsSeatId: snap.primaryWasNull ? null : group.primaryVsSeatId,
+            };
+          } else {
+            if (
+              Object.prototype.hasOwnProperty.call(group.vsSeatOverrides, vsSeatId)
+            ) {
+              const vsSeatOverrides = { ...group.vsSeatOverrides };
+              delete vsSeatOverrides[vsSeatId];
+              nextGroup = { ...group, vsSeatOverrides };
+            } else {
+              nextGroup = group;
+            }
+          }
+          nextDepth = {
+            ...depth,
+            versus: { ...versus, [heroSeatId]: nextGroup },
+          };
         }
       }
       const next = depths.slice();
@@ -663,26 +977,8 @@ export const rangeActions = {
       if (d.editing) return s;
       const depth = d.depths.find((x) => x.label === d.currentDepthLabel);
       if (!depth) return s;
-      const seatId = d.currentSeatId;
-      const scope = seatScope(depth, seatId);
-      const wasIndependent = scope === 'override';
-      const wasPrimary = !wasIndependent && depth.primarySeatId === seatId;
-      const primaryWasNull = !wasIndependent && depth.primarySeatId == null;
-      const cellsBefore = wasIndependent
-        ? { ...depth.seatOverrides[seatId].cells }
-        : { ...depth.sharedCells };
-      const customActionsBefore = wasIndependent
-        ? depth.seatOverrides[seatId].customActions.map((c) => ({ ...c }))
-        : depth.sharedCustomActions.map((c) => ({ ...c }));
-      const editSnapshot: EditSnapshot = {
-        depthLabel: depth.label,
-        seatId,
-        wasIndependent,
-        wasPrimary,
-        primaryWasNull,
-        cellsBefore,
-        customActionsBefore,
-      };
+      const editSnapshot = takeEditSnapshot(depth, d.currentSeatId, d.currentVsSeatId);
+      if (!editSnapshot) return s;
       return { ...s, draft: { ...d, editing: true, editSnapshot } };
     });
   },
@@ -734,7 +1030,7 @@ export const rangeActions = {
 
   fillAll(action: Action) {
     setState((s) => {
-      return applyToSeatScope(s, ({ cells, customActions }) => {
+      return applyAtCurrentScope(s, ({ cells, customActions }) => {
         const target: Record<string, Action> = {};
         if (action !== 'fold') {
           for (const k of ALL_HAND_KEYS) target[k] = action;
@@ -795,6 +1091,9 @@ export const rangeActions = {
           ...s.draft,
           seats: next,
           currentSeatId: validSeat,
+          // 桌人数变化后 vs 候选范围可能整个变了，简单起见统一回退到默认/RFI 视图。
+          // versus 数据本身保留（不丢失用户数据），只是 UI 上回到默认表。
+          currentVsSeatId: null,
           dirty: true,
         },
       };
@@ -807,7 +1106,16 @@ export const rangeActions = {
       if (s.draft.currentDepthLabel === label) return s;
       if (!s.draft.depths.some((d) => d.label === label)) return s;
       const base = rollbackEditing(s.draft, s.persisted);
-      const draft: DraftState = { ...base, currentDepthLabel: label };
+      // 新 depth 下当前 vs 可能不存在（每个 depth 的 versus 是独立的）→ 回退到默认表
+      let currentVsSeatId = base.currentVsSeatId;
+      if (currentVsSeatId !== null && base.currentSeatId) {
+        const nextDepth = base.depths.find((d) => d.label === label);
+        const group = nextDepth?.versus?.[base.currentSeatId];
+        if (!group?.activeVsSeats.includes(currentVsSeatId)) {
+          currentVsSeatId = null;
+        }
+      }
+      const draft: DraftState = { ...base, currentDepthLabel: label, currentVsSeatId };
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
   },
@@ -817,8 +1125,191 @@ export const rangeActions = {
       if (s.draft.currentSeatId === seatId) return s;
       const order = seatsForCount(s.draft.seats);
       if (!(order as readonly string[]).includes(seatId)) return s;
-      const base = rollbackEditing(s.draft, s.persisted);
-      const draft: DraftState = { ...base, currentSeatId: seatId };
+      const d = s.draft;
+      // 编辑模式下切换座位：保留当前已涂色（视为提交），并为新 hero 重新拍快照，editing 保持开启。
+      if (d.editing && d.currentDepthLabel) {
+        const depth = d.depths.find((x) => x.label === d.currentDepthLabel);
+        // 切换 hero 后 vs 候选完全变了 → 回到默认/RFI 视图，对应 vsSeatId=null 的快照
+        const editSnapshot = depth ? takeEditSnapshot(depth, seatId, null) : null;
+        if (editSnapshot) {
+          const draft: DraftState = {
+            ...d,
+            currentSeatId: seatId,
+            currentVsSeatId: null,
+            editing: true,
+            editSnapshot,
+          };
+          return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+        }
+      }
+      const base = rollbackEditing(d, s.persisted);
+      // 切换 hero 后 vs 候选完全变了 → 回退到默认/RFI 视图
+      const draft: DraftState = {
+        ...base,
+        currentSeatId: seatId,
+        currentVsSeatId: null,
+      };
+      return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+    });
+  },
+
+  // ====== 对战座位（vs_seat）操作 ======
+
+  /**
+   * 切换当前查看的对战座位。
+   * - vsSeatId = null → 切回默认/RFI 视图
+   * - vsSeatId 非 null → 必须已在 versus[currentSeatId].activeVsSeats 内，否则忽略
+   * - 编辑模式下切换：保留已涂色（视为提交），为新目标重新拍快照，editing 保持开启
+   * - 非编辑模式：与 switchSeat 一致（rollbackEditing 仅在残留 snapshot 时生效，正常无副作用）
+   */
+  switchVsSeat(vsSeatId: string | null) {
+    setState((s) => {
+      const d = s.draft;
+      if (!d.rangeId) return s;
+      if (d.currentVsSeatId === vsSeatId) return s;
+      if (vsSeatId !== null) {
+        if (!d.currentSeatId || !d.currentDepthLabel) return s;
+        const depth = d.depths.find((x) => x.label === d.currentDepthLabel);
+        const group = depth?.versus?.[d.currentSeatId];
+        if (!group?.activeVsSeats.includes(vsSeatId)) return s;
+      }
+      // 编辑模式下切换对战座位：保留当前已涂色（视为提交），并为新 vs 重新拍快照，editing 保持开启。
+      if (d.editing && d.currentSeatId && d.currentDepthLabel) {
+        const depth = d.depths.find((x) => x.label === d.currentDepthLabel);
+        const editSnapshot = depth
+          ? takeEditSnapshot(depth, d.currentSeatId, vsSeatId)
+          : null;
+        if (editSnapshot) {
+          const draft: DraftState = {
+            ...d,
+            currentVsSeatId: vsSeatId,
+            editing: true,
+            editSnapshot,
+          };
+          return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+        }
+      }
+      const base = rollbackEditing(d, s.persisted);
+      const draft: DraftState = { ...base, currentVsSeatId: vsSeatId };
+      return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+    });
+  },
+
+  /**
+   * 给当前 (depth, hero_seat) 添加一个对战座位，并切换到该 vs 视图。
+   * - 仅编辑模式下生效。
+   * - vsSeatId 必须是 hero 之外的合法座位（其它情况静默忽略）。
+   * - 已存在则只做切换（不重复添加）。
+   * - 创建群组：activeVsSeats 按位置序保持有序，primaryVsSeatId 暂不设置（首次涂色时才会写入）。
+   */
+  addVsSeat(vsSeatId: string) {
+    setState((s) => {
+      const d = s.draft;
+      if (!d.rangeId || !d.editing) return s;
+      if (!d.currentDepthLabel || !d.currentSeatId) return s;
+      const heroSeatId = d.currentSeatId;
+      const others = getOtherSeats(d.seats, heroSeatId) as readonly string[];
+      if (!others.includes(vsSeatId)) return s;
+      const dIdx = d.depths.findIndex((x) => x.label === d.currentDepthLabel);
+      if (dIdx < 0) return s;
+      const depth = d.depths[dIdx];
+      const versus = depth.versus ?? {};
+      const group = versus[heroSeatId];
+      if (group?.activeVsSeats.includes(vsSeatId)) {
+        // 已存在 → 切到 viewport
+        if (d.currentVsSeatId === vsSeatId) return s;
+        const base = rollbackEditing(d, s.persisted);
+        const draft: DraftState = { ...base, currentVsSeatId: vsSeatId };
+        return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+      }
+      const baseGroup = group ?? emptyVersusGroup();
+      const merged = new Set<string>([...baseGroup.activeVsSeats, vsSeatId]);
+      const sortedActive = others.filter((id) => merged.has(id));
+      const nextGroup: VersusGroup = { ...baseGroup, activeVsSeats: sortedActive };
+      // 添加对战座位是结构性变更：先 rollback 当前编辑（避免 editSnapshot 指向陈旧群组），
+      // 再写入新的 depth，最后把视图切到新的 vs。
+      const rolled = rollbackEditing(d, s.persisted);
+      const depths = rolled.depths.slice();
+      depths[dIdx] = {
+        ...depths[dIdx],
+        versus: { ...(depths[dIdx].versus ?? {}), [heroSeatId]: nextGroup },
+      };
+      const draft: DraftState = {
+        ...rolled,
+        depths,
+        currentVsSeatId: vsSeatId,
+        dirty: true,
+      };
+      return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
+    });
+  },
+
+  /**
+   * 从当前 (depth, hero_seat) 移除一个对战座位（连同其专属 cells / override）。
+   * - 仅编辑模式下生效。
+   * - 移除当前正在查看的 vs → 自动切回默认/RFI 视图。
+   * - 移除后若群组完全空（无 active、无 cells、无 customActions），直接删除整个群组。
+   */
+  removeVsSeat(vsSeatId: string) {
+    setState((s) => {
+      const d = s.draft;
+      if (!d.rangeId || !d.editing) return s;
+      if (!d.currentDepthLabel || !d.currentSeatId) return s;
+      const heroSeatId = d.currentSeatId;
+      const dIdx = d.depths.findIndex((x) => x.label === d.currentDepthLabel);
+      if (dIdx < 0) return s;
+      const depth = d.depths[dIdx];
+      const versus = depth.versus;
+      const group = versus?.[heroSeatId];
+      if (!versus || !group || !group.activeVsSeats.includes(vsSeatId)) return s;
+
+      // 先把当前编辑回滚掉（snapshot 可能指向被删的 vs）
+      const rolled = rollbackEditing(d, s.persisted);
+      const depthsAfterRollback = rolled.depths;
+      const rolledVersus = depthsAfterRollback[dIdx].versus ?? versus;
+      const rolledGroup = rolledVersus[heroSeatId] ?? group;
+
+      const nextActive = rolledGroup.activeVsSeats.filter((id) => id !== vsSeatId);
+      const nextOverrides = { ...rolledGroup.vsSeatOverrides };
+      delete nextOverrides[vsSeatId];
+      const nextPrimary =
+        rolledGroup.primaryVsSeatId === vsSeatId ? null : rolledGroup.primaryVsSeatId;
+
+      const isGroupEmpty =
+        nextActive.length === 0 &&
+        Object.keys(rolledGroup.vsSharedCells).length === 0 &&
+        rolledGroup.vsSharedCustomActions.length === 0 &&
+        Object.keys(nextOverrides).length === 0;
+
+      const newVersus: Record<string, VersusGroup> = { ...rolledVersus };
+      if (isGroupEmpty) {
+        delete newVersus[heroSeatId];
+      } else {
+        newVersus[heroSeatId] = {
+          ...rolledGroup,
+          activeVsSeats: nextActive,
+          vsSeatOverrides: nextOverrides,
+          primaryVsSeatId: nextPrimary,
+        };
+      }
+
+      const depths = depthsAfterRollback.slice();
+      const newDepth: DepthGrid = { ...depths[dIdx] };
+      if (Object.keys(newVersus).length > 0) {
+        newDepth.versus = newVersus;
+      } else {
+        delete newDepth.versus;
+      }
+      depths[dIdx] = newDepth;
+
+      const currentVsSeatId =
+        rolled.currentVsSeatId === vsSeatId ? null : rolled.currentVsSeatId;
+      const draft: DraftState = {
+        ...rolled,
+        depths,
+        currentVsSeatId,
+        dirty: true,
+      };
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
   },
@@ -860,7 +1351,7 @@ export const rangeActions = {
     setState((s) => {
       const range = makeRange(name, s.persisted.defaultDepthLabels, seats);
       outId = range.id;
-      const draft = draftFromRange(range, range.depths[0]?.label ?? null, null);
+      const draft = draftFromRange(range, range.depths[0]?.label ?? null, null, null);
       return {
         ...s,
         draft,
@@ -881,6 +1372,7 @@ export const rangeActions = {
         found,
         s.persisted.lastOpenedDepthLabel,
         s.persisted.lastOpenedSeatId,
+        s.persisted.lastOpenedVsSeatId,
       );
       return { ...s, draft, persisted: bumpLastOpened(draft, s.persisted) };
     });
@@ -923,6 +1415,7 @@ export const rangeActions = {
         range,
         base.currentDepthLabel,
         base.currentSeatId,
+        base.currentVsSeatId,
       );
       return {
         ...s,
@@ -1097,7 +1590,7 @@ export const rangeActions = {
       if (!s.draft.rangeId) return s;
       const id = newCustomActionId();
       const next: CustomAction = { id, label: trimmed, color: color.trim() };
-      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+      const after = applyAtCurrentScope(s, ({ cells, customActions }) => {
         return { cells, customActions: [...customActions, next] };
       });
       if (after !== s) outId = id;
@@ -1110,7 +1603,7 @@ export const rangeActions = {
   updateCustomAction(id: string, patch: { label?: string; color?: string }): boolean {
     let ok = false;
     setState((s) => {
-      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+      const after = applyAtCurrentScope(s, ({ cells, customActions }) => {
         const idx = customActions.findIndex((c) => c.id === id);
         if (idx < 0) return { cells, customActions };
         const cur = customActions[idx];
@@ -1155,7 +1648,7 @@ export const rangeActions = {
         }
         return changed ? out : cells;
       };
-      const after = applyToSeatScope(s, ({ cells, customActions }) => {
+      const after = applyAtCurrentScope(s, ({ cells, customActions }) => {
         if (!customActions.some((c) => c.id === id)) {
           return { cells, customActions };
         }

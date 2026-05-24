@@ -112,6 +112,7 @@ interface SettingsPayload {
   lastOpenedRangeId: string | null;
   lastOpenedDepthLabel: string | null;
   lastOpenedSeatId: string | null;
+  lastOpenedVsSeatId: string | null;
 }
 
 function settingsFromPersisted(p: PersistedState): SettingsPayload {
@@ -120,6 +121,7 @@ function settingsFromPersisted(p: PersistedState): SettingsPayload {
     lastOpenedRangeId: p.lastOpenedRangeId,
     lastOpenedDepthLabel: p.lastOpenedDepthLabel,
     lastOpenedSeatId: p.lastOpenedSeatId,
+    lastOpenedVsSeatId: p.lastOpenedVsSeatId,
   };
 }
 
@@ -139,6 +141,10 @@ function sanitizeServerSettings(raw: unknown): SettingsPayload | null {
     lastOpenedSeatId:
       typeof r.lastOpenedSeatId === 'string' && isValidSeatId(r.lastOpenedSeatId)
         ? r.lastOpenedSeatId
+        : null,
+    lastOpenedVsSeatId:
+      typeof r.lastOpenedVsSeatId === 'string' && isValidSeatId(r.lastOpenedVsSeatId)
+        ? r.lastOpenedVsSeatId
         : null,
   };
 }
@@ -338,6 +344,7 @@ export async function pullAndMerge(): Promise<void> {
       lastOpenedRangeId: nextSettingsPayload.lastOpenedRangeId,
       lastOpenedDepthLabel: nextSettingsPayload.lastOpenedDepthLabel,
       lastOpenedSeatId: nextSettingsPayload.lastOpenedSeatId,
+      lastOpenedVsSeatId: nextSettingsPayload.lastOpenedVsSeatId,
       settingsUpdatedAt: nextSettingsAt,
     };
     _replaceRangePersisted(nextPersisted);

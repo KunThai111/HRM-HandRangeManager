@@ -64,3 +64,16 @@ export const SEAT_FULL_LABEL: Record<SeatId, string> = {
 export function seatExistsInCount(seatId: string, count: number): boolean {
   return (seatsForCount(count) as readonly string[]).includes(seatId);
 }
+
+/**
+ * 给定桌人数 + hero 座位，返回除 hero 自身外的全部座位（按位置序）。
+ *
+ * 用于决定对战座位（vs_seat）的候选范围：除了 hero 自己以外，任何座位都可以作为对战。
+ * - 9 人桌 hero=BTN → ['UTG','U1','U2','LJ','HJ','CO','SB','BB']
+ * - hero 不在当前桌的座位序列内 → 返回空数组（防御性返回）
+ */
+export function getOtherSeats(count: number, heroSeatId: string): SeatId[] {
+  const order = seatsForCount(count);
+  if (!(order as readonly string[]).includes(heroSeatId)) return [];
+  return order.filter((s) => s !== heroSeatId) as SeatId[];
+}

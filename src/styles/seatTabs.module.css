@@ -109,6 +109,129 @@
   color: var(--text-2);
 }
 
+/* ---------- 对战座位（vs_seat）行 ---------- */
+
+.vsTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vsTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+}
+
+.vsTab:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+
+.vsTab.active {
+  background: var(--accent-selected);
+  border-style: solid;
+  border-color: var(--accent-selected);
+  color: #fff;
+  box-shadow: 0 2px 6px var(--accent-selected-shadow);
+}
+
+/* RFI 按钮稍微突出（用实线边框、稍浓色调） */
+.vsRfi {
+  border-style: solid;
+  color: var(--text-1);
+}
+
+.vsRfi:not(.active) {
+  background: var(--bg-2);
+}
+
+.vsTabLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+/* + 添加按钮 */
+.vsAdd {
+  position: relative;
+  display: inline-flex;
+}
+
+.vsAddBtn {
+  min-width: 26px;
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-2);
+}
+
+.vsAddBtn:hover {
+  color: var(--text-0);
+}
+
+/* 弹出选择菜单 */
+.vsMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.vsMenuTitle {
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.vsMenuGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vsMenuItem {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vsMenuItem:hover {
+  background: var(--bg-3);
+  border-color: var(--border-strong);
+  color: var(--text-0);
+}
+
 @media (max-width: 720px) {
   .row {
     gap: 8px;

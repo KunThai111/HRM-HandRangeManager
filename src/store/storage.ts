@@ -4,10 +4,11 @@ import {
   DEFAULT_DEPTH_LABELS,
   type DepthGrid,
   type SeatOverride,
+  type VersusGroup,
   emptyDepth,
 } from '@/lib/depths';
 import { ALL_HAND_KEYS } from '@/lib/hands';
-import { isValidSeatId, seatsForCount } from '@/lib/seats';
+import { getOtherSeats, isValidSeatId, seatsForCount } from '@/lib/seats';
 
 const VALID_HAND_KEYS = new Set<string>(ALL_HAND_KEYS);
 
@@ -50,6 +51,12 @@ export interface PersistedState {
   lastOpenedRangeId: string | null;
   lastOpenedDepthLabel: string | null;
   lastOpenedSeatId: string | null;
+  /**
+   * 上次查看的对战座位（vs_seat）id；null = 默认/RFI 视图。
+   * 切换 hero 座位时通常会被重置为 null（避免出现 hero 与 vs 不匹配的非法组合）。
+   * 旧数据没有该字段时回退为 null。
+   */
+  lastOpenedVsSeatId: string | null;
   /**
    * 已删除范围的墓碑：id → 删除时间戳（ms）。
    * 只用于服务端同步时保证「在 A 设备删的范围，B 设备拉下来后也会被清掉」。
@@ -163,7 +170,94 @@ function sanitizeSeatOverrides(raw: unknown): Record<string, SeatOverride> {
   return out;
 }
 
-function sanitizeDepthV3(raw: unknown): DepthGrid | null {
+/**
+ * 清洗一个 hero 座位下的 VersusGroup。
+ * - 允许的 vsSeatId 必须是 hero 之外的合法座位（落在当前桌的座位序列内、且不是 hero 自己）。
+ * - activeVsSeats 去重 + 过滤非法项 + 按位置序重排。
+ * - vsSeatOverrides 中的 key 必须在最终 activeVsSeats 内，否则丢弃。
+ * - primaryVsSeatId 必须在 activeVsSeats 内、且不在 vsSeatOverrides 内；否则置 null。
+ * - 完全空（activeVsSeats 空 + 无任何 cells / customActions）→ 返回 null（让调用方剔除该 hero）。
+ */
+function sanitizeVersusGroup(
+  raw: unknown,
+  heroSeatId: string,
+  rangeSeats: number,
+): VersusGroup | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const allowedOrder = getOtherSeats(rangeSeats, heroSeatId).map(
+    (s) => s as string,
+  );
+  const allowedSet = new Set(allowedOrder);
+
+  const rawActive = Array.isArray(r.activeVsSeats) ? r.activeVsSeats : [];
+  const seen = new Set<string>();
+  for (const v of rawActive) {
+    if (typeof v !== 'string') continue;
+    if (!allowedSet.has(v)) continue;
+    seen.add(v);
+  }
+  const activeVsSeats = allowedOrder.filter((id) => seen.has(id));
+
+  const vsSharedCells = sanitizeCells(r.vsSharedCells);
+  const vsSharedCustomActions = sanitizeCustomActions(r.vsSharedCustomActions);
+
+  const rawOverrides =
+    r.vsSeatOverrides && typeof r.vsSeatOverrides === 'object'
+      ? (r.vsSeatOverrides as Record<string, unknown>)
+      : {};
+  const vsSeatOverrides: Record<string, SeatOverride> = {};
+  for (const [vsId, overrideRaw] of Object.entries(rawOverrides)) {
+    if (!activeVsSeats.includes(vsId)) continue;
+    const override = sanitizeOverride(overrideRaw);
+    if (override) vsSeatOverrides[vsId] = override;
+  }
+
+  const primaryRaw =
+    typeof r.primaryVsSeatId === 'string' ? r.primaryVsSeatId : null;
+  const primaryVsSeatId =
+    primaryRaw &&
+    activeVsSeats.includes(primaryRaw) &&
+    !Object.prototype.hasOwnProperty.call(vsSeatOverrides, primaryRaw)
+      ? primaryRaw
+      : null;
+
+  if (
+    activeVsSeats.length === 0 &&
+    Object.keys(vsSharedCells).length === 0 &&
+    vsSharedCustomActions.length === 0 &&
+    Object.keys(vsSeatOverrides).length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    activeVsSeats,
+    vsSharedCells,
+    vsSharedCustomActions,
+    vsSeatOverrides,
+    primaryVsSeatId,
+  };
+}
+
+function sanitizeVersus(
+  raw: unknown,
+  rangeSeats: number,
+): Record<string, VersusGroup> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const validHeroSet = new Set(seatsForCount(rangeSeats) as readonly string[]);
+  const out: Record<string, VersusGroup> = {};
+  for (const [heroSeatId, groupRaw] of Object.entries(
+    raw as Record<string, unknown>,
+  )) {
+    if (!validHeroSet.has(heroSeatId)) continue;
+    const group = sanitizeVersusGroup(groupRaw, heroSeatId, rangeSeats);
+    if (group) out[heroSeatId] = group;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeDepthV3(raw: unknown, rangeSeats: number): DepthGrid | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.label !== 'string' || !r.label) return null;
@@ -179,13 +273,16 @@ function sanitizeDepthV3(raw: unknown): DepthGrid | null {
     primary && Object.prototype.hasOwnProperty.call(seatOverrides, primary)
       ? null
       : primary;
-  return {
+  const versus = sanitizeVersus(r.versus, rangeSeats);
+  const depth: DepthGrid = {
     label: r.label,
     sharedCells,
     sharedCustomActions,
     seatOverrides,
     primarySeatId,
   };
+  if (versus) depth.versus = versus;
+  return depth;
 }
 
 /**
@@ -207,8 +304,13 @@ function migrateDepthFromV2(
   if (typeof r.label !== 'string' || !r.label) return null;
 
   // v3 字段优先（如果数据已是 v3 或部分 v3）
-  if (r.sharedCells !== undefined || r.seatOverrides !== undefined || r.primarySeatId !== undefined) {
-    return sanitizeDepthV3(r);
+  if (
+    r.sharedCells !== undefined ||
+    r.seatOverrides !== undefined ||
+    r.primarySeatId !== undefined ||
+    r.versus !== undefined
+  ) {
+    return sanitizeDepthV3(r, rangeSeats);
   }
 
   const order = seatsForCount(rangeSeats);
@@ -374,6 +476,7 @@ function migrateV1(raw: unknown): PersistedState | null {
     lastOpenedDepthLabel:
       typeof r.lastOpenedStack === 'string' ? (r.lastOpenedStack as string) : null,
     lastOpenedSeatId: null,
+    lastOpenedVsSeatId: null,
     rangeTombstones: {},
     settingsUpdatedAt: 0,
   };
@@ -420,6 +523,11 @@ export function sanitizePersisted(raw: unknown): PersistedState | null {
     lastOpenedSeatId:
       typeof parsed.lastOpenedSeatId === 'string' && isValidSeatId(parsed.lastOpenedSeatId)
         ? parsed.lastOpenedSeatId
+        : null,
+    lastOpenedVsSeatId:
+      typeof parsed.lastOpenedVsSeatId === 'string' &&
+      isValidSeatId(parsed.lastOpenedVsSeatId)
+        ? parsed.lastOpenedVsSeatId
         : null,
     rangeTombstones: sanitizeTombstones(parsed.rangeTombstones),
     settingsUpdatedAt:
@@ -472,6 +580,7 @@ function cloneEmpty(): PersistedState {
     lastOpenedRangeId: null,
     lastOpenedDepthLabel: null,
     lastOpenedSeatId: null,
+    lastOpenedVsSeatId: null,
     rangeTombstones: {},
     settingsUpdatedAt: 0,
   };
